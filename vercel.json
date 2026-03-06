@@ -1,6 +1,6 @@
 {
-    "buildCommand": "npm run build:shopify",
-    "outputDirectory": "dist-shopify",
+    "buildCommand": "npm run build:vercel",
+    "outputDirectory": "dist",
     "headers": [
         {
             "source": "/chase-configurator.iife.js",

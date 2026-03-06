@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:shopify": "cross-env BUILD_TARGET=shopify vite build",
+    "build:vercel": "npm run build && npm run build:shopify && cp dist-shopify/chase-configurator.iife.js dist/",
     "lint": "eslint .",
     "preview": "vite preview"
   },
