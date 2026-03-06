@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { PRICING } from '../config';
+import { onPricingLoaded } from '../config/pricing';
 
 export interface CollarState {
   dia: number;
@@ -83,3 +84,8 @@ export const useConfigStore = create<ConfigState>((set) => ({
     return { [key]: updated, price: computePrice(next) };
   }),
 }));
+
+onPricingLoaded(() => {
+  const state = useConfigStore.getState();
+  useConfigStore.setState({ price: computePrice(state) });
+});

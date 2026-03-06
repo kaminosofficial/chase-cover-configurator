@@ -4,6 +4,7 @@ import cssInjectedByJs from 'vite-plugin-css-injected-by-js'
 import os from 'os'
 
 const isVercel = process.env.VERCEL === '1'
+const buildTarget = process.env.BUILD_TARGET // 'shopify' | undefined
 
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
@@ -18,27 +19,57 @@ function getLocalIP() {
   return undefined;
 }
 
-export default defineConfig({
-  plugins: [
-    react(),
-    !isVercel && cssInjectedByJs(),
-  ].filter(Boolean),
-  define: {
-    __LOCAL_IP__: JSON.stringify(getLocalIP())
-  },
-  build: isVercel ? {
-    outDir: 'dist',
-  } : {
+function getBuildConfig() {
+  if (buildTarget === 'shopify') {
+    return {
+      lib: {
+        entry: 'src/shopify-entry.tsx',
+        name: 'ChaseConfigurator',
+        fileName: 'chase-configurator',
+        formats: ['iife'] as ('iife')[],
+      },
+      outDir: 'dist-shopify',
+      cssCodeSplit: false,
+      minify: 'esbuild',
+      rollupOptions: {
+        output: { inlineDynamicImports: true },
+      },
+    };
+  }
+
+  if (isVercel) {
+    return { outDir: 'dist' };
+  }
+
+  // Default: legacy web-component IIFE build
+  return {
     lib: {
       entry: 'src/web-component.tsx',
       name: 'ChaseConfigurator',
       fileName: 'chase-configurator',
-      formats: ['iife'],
+      formats: ['iife'] as ('iife')[],
     },
     outDir: 'dist',
     rollupOptions: {
-      output: { inlineDynamicImports: true }
-    }
+      output: { inlineDynamicImports: true },
+    },
+  };
+}
+
+const isBuild = process.env.NODE_ENV === 'production' || buildTarget !== undefined;
+
+export default defineConfig({
+  plugins: [
+    react(),
+    (!isVercel && buildTarget !== 'shopify') && cssInjectedByJs(),
+  ].filter(Boolean),
+  define: {
+    __LOCAL_IP__: JSON.stringify(getLocalIP()),
+    ...(isBuild && {
+      'process.env.NODE_ENV': JSON.stringify('production'),
+      'process.env': JSON.stringify({}),
+    }),
   },
-  server: { port: 5173, host: true, open: true }
+  build: getBuildConfig(),
+  server: { port: 5173, host: true, open: true },
 })

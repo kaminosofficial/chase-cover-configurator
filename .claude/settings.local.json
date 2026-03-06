@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "Bash(BUILD_TARGET=shopify npx vite:*)",
+      "Bash(rm:*)",
+      "WebFetch(domain:community.shopify.dev)",
+      "WebFetch(domain:shopify.dev)",
+      "WebFetch(domain:www.diverge-sneakers.com)",
+      "Bash(node:*)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

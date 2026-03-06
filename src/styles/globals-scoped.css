@@ -1,0 +1,1505 @@
+/*
+ * Chase Configurator – Scoped CSS for Shopify IIFE embed
+ * -------------------------------------------------------
+ * Every selector is scoped under .chase-configurator-root so that
+ * Shopify theme styles cannot leak in and configurator styles cannot leak out.
+ * All visual properties use !important to guarantee overrides.
+ *
+ * Google Fonts (@import) is handled at runtime by shopify-entry.tsx.
+ */
+
+/* ===== Root scope & CSS variables ===== */
+.chase-configurator-root {
+    --bg: #fdfcfb !important;
+    --surface: #f8f5f1 !important;
+    --border: #ddd8d0 !important;
+    --border-light: #ede8e0 !important;
+    --text: #1c1914 !important;
+    --text-muted: #7a7168 !important;
+    --accent: #4b484b !important;
+    --accent-dim: rgba(75, 72, 75, 0.1) !important;
+    --accent-hover: #3a383a !important;
+    --primary: #d1b382 !important;
+    --primary-hover: #b89a69 !important;
+    --radius: 6px !important;
+    --mono: "JetBrains Mono", monospace !important;
+    --sans: "DM Sans", -apple-system, sans-serif !important;
+
+    /* Scoped resets */
+    font-family: var(--sans) !important;
+    background: var(--bg) !important;
+    color: var(--text) !important;
+    line-height: 1.5 !important;
+    font-size: 16px !important;
+    font-weight: 400 !important;
+    -webkit-font-smoothing: antialiased !important;
+    -moz-osx-font-smoothing: grayscale !important;
+    text-rendering: optimizeLegibility !important;
+    font-synthesis: none !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    width: 100% !important;
+    overflow: hidden !important;
+    position: relative !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.chase-configurator-root *,
+.chase-configurator-root *::before,
+.chase-configurator-root *::after {
+    margin: 0 !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+}
+
+.chase-configurator-root button {
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent !important;
+    font-family: var(--sans) !important;
+}
+
+.chase-configurator-root :focus-visible {
+    outline: 2px solid var(--primary) !important;
+    outline-offset: 2px !important;
+}
+
+/* ===== Header ===== */
+.chase-configurator-root header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 10px 20px !important;
+    border-bottom: 1px solid var(--border) !important;
+    background: var(--bg) !important;
+    flex-shrink: 0 !important;
+    z-index: 10 !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+    margin: 0 !important;
+}
+
+.chase-configurator-root .logo {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    font-weight: 700 !important;
+    font-size: 16px !important;
+    font-family: var(--sans) !important;
+    color: var(--text) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    padding: 0 !important;
+    height: auto !important;
+    width: auto !important;
+    will-change: auto !important;
+    filter: none !important;
+    transition: none !important;
+}
+
+.chase-configurator-root .logo-mark {
+    width: 26px !important;
+    height: 26px !important;
+    background: var(--primary) !important;
+    border-radius: 5px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    color: #fff !important;
+    font-family: var(--sans) !important;
+    line-height: 1 !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+.chase-configurator-root .header-meta {
+    font-family: var(--mono) !important;
+    font-size: 10px !important;
+    color: var(--text-muted) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+/* ===== App layout ===== */
+.chase-configurator-root .app-layout {
+    display: flex !important;
+    flex: 1 !important;
+    overflow: hidden !important;
+}
+
+/* ===== Viewport ===== */
+.chase-configurator-root .viewport {
+    flex: 1 !important;
+    position: relative !important;
+    background: #cdc9c0 !important;
+    overflow: hidden !important;
+}
+
+.chase-configurator-root .viewport canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block !important;
+}
+
+.chase-configurator-root .viewport-badge {
+    position: absolute !important;
+    bottom: 14px !important;
+    left: 14px !important;
+    font-family: var(--mono) !important;
+    font-size: 10px !important;
+    color: #aaa !important;
+    pointer-events: none !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+.chase-configurator-root .viewport-controls {
+    position: absolute !important;
+    top: 14px !important;
+    left: 14px !important;
+    display: flex !important;
+    gap: 5px !important;
+    z-index: 5 !important;
+}
+
+.chase-configurator-root .vp-btn {
+    width: 32px !important;
+    height: 32px !important;
+    background: rgba(253, 252, 251, 0.85) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    color: var(--text-muted) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    font-size: 13px !important;
+    transition: background-color 0.15s, color 0.15s !important;
+    backdrop-filter: blur(4px) !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    line-height: 1 !important;
+    font-family: var(--sans) !important;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .vp-btn:hover {
+    background: var(--bg) !important;
+    color: var(--text) !important;
+}
+
+/* ===== Dimension overlay ===== */
+.chase-configurator-root .dim-overlay {
+    position: absolute !important;
+    top: 14px !important;
+    right: 14px !important;
+    font-family: var(--mono) !important;
+    font-size: 11px !important;
+    color: #666 !important;
+    background: rgba(255, 255, 255, 0.88) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    padding: 8px 12px !important;
+    pointer-events: none !important;
+    line-height: 1.7 !important;
+    backdrop-filter: blur(4px) !important;
+    z-index: 5 !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .dim-overlay span {
+    color: var(--accent) !important;
+    font-weight: 600 !important;
+}
+
+/* ===== Sidebar ===== */
+.chase-configurator-root .sidebar {
+    width: 38% !important;
+    min-width: 340px !important;
+    max-width: 520px !important;
+    background: var(--bg) !important;
+    border-left: 1px solid var(--border) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    border-top: none !important;
+    border-right: none !important;
+    border-bottom: none !important;
+}
+
+.chase-configurator-root .sidebar-scroll {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: 18px !important;
+}
+
+.chase-configurator-root .sidebar-scroll::-webkit-scrollbar {
+    width: 6px !important;
+}
+
+.chase-configurator-root .sidebar-scroll::-webkit-scrollbar-track {
+    background: #f1f1f1 !important;
+}
+
+.chase-configurator-root .sidebar-scroll::-webkit-scrollbar-thumb {
+    background: #ccc !important;
+    border-radius: 4px !important;
+}
+
+.chase-configurator-root .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+    background: #bbb !important;
+}
+
+/* ===== Sections ===== */
+.chase-configurator-root .section {
+    margin-bottom: 22px !important;
+}
+
+.chase-configurator-root .section-title {
+    font-size: 11.5px !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1.2px !important;
+    color: var(--text-muted) !important;
+    margin-bottom: 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+}
+
+.chase-configurator-root .section-title::after {
+    content: "" !important;
+    flex: 1 !important;
+    height: 1px !important;
+    background: var(--border-light) !important;
+}
+
+/* ===== Field rows / inputs ===== */
+.chase-configurator-root .field-row {
+    display: flex !important;
+    gap: 8px !important;
+    margin-bottom: 8px !important;
+}
+
+.chase-configurator-root .field {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+}
+
+.chase-configurator-root .field label {
+    font-size: 12.5px !important;
+    font-weight: 500 !important;
+    color: var(--text-muted) !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .field input[type="number"] {
+    background: var(--bg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    padding: 10px 12px !important;
+    color: var(--text) !important;
+    font-family: var(--sans) !important;
+    font-size: 14px !important;
+    outline: none !important;
+    transition: border-color 0.15s !important;
+    width: 100% !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    -moz-appearance: textfield !important;
+    appearance: textfield !important;
+    height: auto !important;
+    min-height: 0 !important;
+    box-shadow: none !important;
+}
+
+.chase-configurator-root .field input:focus-visible {
+    border-color: var(--accent) !important;
+}
+
+.chase-configurator-root .field .unit {
+    font-size: 10.5px !important;
+    color: #aaa !important;
+    font-family: var(--mono) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .field-row-3 {
+    display: flex !important;
+    gap: 8px !important;
+}
+
+.chase-configurator-root .field-row-3>.field {
+    flex: 1 !important;
+    min-width: 0 !important;
+}
+
+/* ===== Offset grid ===== */
+.chase-configurator-root .offset-grid {
+    background: rgba(0, 0, 0, 0.02) !important;
+    border: 1px dashed var(--border) !important;
+    border-radius: var(--radius) !important;
+    padding: 12px !important;
+    margin-top: 12px !important;
+}
+
+/* ===== Toggles ===== */
+.chase-configurator-root .toggle-row {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 8px 0 !important;
+    border-bottom: 1px solid var(--border-light) !important;
+}
+
+.chase-configurator-root .toggle-row:last-child {
+    border-bottom: none !important;
+}
+
+.chase-configurator-root .toggle-label {
+    font-size: 13.5px !important;
+    font-weight: 500 !important;
+    font-family: var(--sans) !important;
+    color: var(--text) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .toggle {
+    position: relative !important;
+    width: 36px !important;
+    height: 20px !important;
+    cursor: pointer !important;
+    flex-shrink: 0 !important;
+}
+
+.chase-configurator-root .toggle input {
+    display: none !important;
+}
+
+.chase-configurator-root .toggle-track {
+    position: absolute !important;
+    inset: 0 !important;
+    background: #d9d3ca !important;
+    border-radius: 10px !important;
+    transition: background 0.2s !important;
+}
+
+.chase-configurator-root .toggle input:checked+.toggle-track {
+    background: var(--accent) !important;
+}
+
+.chase-configurator-root .toggle-knob {
+    position: absolute !important;
+    top: 2px !important;
+    left: 2px !important;
+    width: 16px !important;
+    height: 16px !important;
+    background: var(--bg) !important;
+    border-radius: 50% !important;
+    transition: transform 0.2s !important;
+    pointer-events: none !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15) !important;
+}
+
+.chase-configurator-root .toggle input:checked~.toggle-knob {
+    transform: translateX(16px) !important;
+}
+
+/* ===== Hole selector ===== */
+.chase-configurator-root .hole-selector {
+    display: flex !important;
+    gap: 5px !important;
+    margin-bottom: 12px !important;
+}
+
+.chase-configurator-root .hole-btn {
+    flex: 1 !important;
+    padding: 10px 0 !important;
+    background: var(--bg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    color: var(--text-muted) !important;
+    font-family: var(--sans) !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    cursor: pointer !important;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s !important;
+    text-align: center !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    min-height: 0 !important;
+}
+
+.chase-configurator-root .hole-btn:hover {
+    border-color: #bbb !important;
+}
+
+.chase-configurator-root .hole-btn.active {
+    background: var(--accent-dim) !important;
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+}
+
+/* ===== Collar groups ===== */
+.chase-configurator-root .collar-group {
+    background: var(--surface) !important;
+    border: 1px solid var(--border-light) !important;
+    border-radius: var(--radius) !important;
+    padding: 12px !important;
+    margin-bottom: 8px !important;
+}
+
+.chase-configurator-root .collar-group-title {
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    color: var(--accent) !important;
+    margin-bottom: 8px !important;
+    font-family: var(--sans) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+    line-height: normal !important;
+}
+
+.chase-configurator-root .centered-check {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    margin-bottom: 8px !important;
+    font-size: 12.5px !important;
+    color: var(--text-muted) !important;
+    cursor: pointer !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .centered-check input[type="checkbox"] {
+    accent-color: var(--accent) !important;
+    width: 16px !important;
+    height: 16px !important;
+    display: inline-block !important;
+}
+
+/* ===== Material chips ===== */
+.chase-configurator-root .material-chips {
+    display: flex !important;
+    gap: 5px !important;
+    flex-wrap: wrap !important;
+}
+
+.chase-configurator-root .material-chip {
+    padding: 8px 14px !important;
+    background: var(--bg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 16px !important;
+    color: var(--text-muted) !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    cursor: pointer !important;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .material-chip:hover {
+    border-color: #bbb !important;
+}
+
+.chase-configurator-root .material-chip.active {
+    background: var(--accent-dim) !important;
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+}
+
+/* ===== Gauge select ===== */
+.chase-configurator-root .gauge-select {
+    width: 100% !important;
+    background: var(--bg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    padding: 10px 12px !important;
+    color: var(--text) !important;
+    font-family: var(--sans) !important;
+    font-size: 13px !important;
+    outline: none !important;
+    cursor: pointer !important;
+    transition: border-color 0.15s !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    height: auto !important;
+    min-height: 0 !important;
+    appearance: auto !important;
+    -webkit-appearance: auto !important;
+    box-shadow: none !important;
+}
+
+.chase-configurator-root .gauge-select:focus-visible {
+    border-color: var(--accent) !important;
+}
+
+/* ===== RAL selector button ===== */
+.chase-configurator-root .ral-selector-btn {
+    width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 10px 14px !important;
+    background: var(--bg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    cursor: pointer !important;
+    text-align: left !important;
+    transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .ral-selector-btn:hover {
+    border-color: var(--accent) !important;
+    background: var(--surface) !important;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02) !important;
+}
+
+.chase-configurator-root .ral-preview-swatch {
+    width: 28px !important;
+    height: 28px !important;
+    border-radius: 4px !important;
+    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+    flex-shrink: 0 !important;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05) !important;
+}
+
+.chase-configurator-root .ral-preview-text {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+}
+
+.chase-configurator-root .ral-code {
+    font-size: 11px !important;
+    color: var(--text-muted) !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.5px !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+}
+
+.chase-configurator-root .ral-name {
+    font-size: 13px !important;
+    color: var(--text) !important;
+    font-weight: 500 !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .ral-chevron {
+    color: var(--text-muted) !important;
+    font-size: 16px !important;
+}
+
+/* ===== RAL Modal ===== */
+.chase-configurator-root .ral-modal-overlay {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    background: rgba(0, 0, 0, 0.4) !important;
+    backdrop-filter: blur(8px) !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    z-index: 9999 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transition: opacity 0.3s ease !important;
+}
+
+.chase-configurator-root .ral-modal-overlay.active {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+}
+
+.chase-configurator-root .ral-modal-content {
+    background: rgba(255, 255, 255, 0.95) !important;
+    width: 90% !important;
+    max-width: 600px !important;
+    height: 85vh !important;
+    max-height: 700px !important;
+    border-radius: 20px !important;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    transform: translateY(20px) scale(0.98) !important;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+}
+
+.chase-configurator-root .ral-modal-overlay.active .ral-modal-content {
+    transform: translateY(0) scale(1) !important;
+}
+
+.chase-configurator-root .ral-modal-header {
+    padding: 20px 24px !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06) !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+}
+
+.chase-configurator-root .ral-modal-header h3 {
+    margin: 0 !important;
+    font-size: 18px !important;
+    font-weight: 600 !important;
+    color: var(--text) !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .ral-close-btn {
+    background: none !important;
+    border: none !important;
+    font-size: 24px !important;
+    color: var(--text-muted) !important;
+    cursor: pointer !important;
+    line-height: 1 !important;
+    padding: 0 4px !important;
+    transition: color 0.15s !important;
+    font-family: var(--sans) !important;
+}
+
+.chase-configurator-root .ral-close-btn:hover {
+    color: #c43830 !important;
+}
+
+.chase-configurator-root .ral-search-bar {
+    padding: 16px 24px !important;
+    position: relative !important;
+}
+
+.chase-configurator-root .ral-search-icon {
+    position: absolute !important;
+    left: 36px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    color: #aaa !important;
+}
+
+.chase-configurator-root .ral-search-input {
+    width: 100% !important;
+    padding: 12px 16px 12px 40px !important;
+    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+    border-radius: 8px !important;
+    font-family: var(--sans) !important;
+    font-size: 14px !important;
+    background: var(--surface) !important;
+    transition: border-color 0.2s, box-shadow 0.2s !important;
+    outline: none !important;
+    color: var(--text) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    height: auto !important;
+    min-height: 0 !important;
+    box-shadow: none !important;
+}
+
+.chase-configurator-root .ral-search-input:focus-visible {
+    background: var(--bg) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px rgba(209, 179, 130, 0.2) !important;
+}
+
+.chase-configurator-root .ral-tabs {
+    display: flex !important;
+    overflow-x: auto !important;
+    padding: 0 24px 12px 24px !important;
+    gap: 6px !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06) !important;
+    scrollbar-width: none !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+}
+
+.chase-configurator-root .ral-tabs::-webkit-scrollbar {
+    display: none !important;
+}
+
+.chase-configurator-root .ral-tab {
+    padding: 6px 14px !important;
+    background: #f0f0f5 !important;
+    border: none !important;
+    border-radius: 16px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: var(--text-muted) !important;
+    cursor: pointer !important;
+    white-space: nowrap !important;
+    transition: all 0.2s !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .ral-tab:hover {
+    background: #e4e4eb !important;
+}
+
+.chase-configurator-root .ral-tab.active {
+    background: var(--accent) !important;
+    color: #fff !important;
+}
+
+.chase-configurator-root .ral-grid-container {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: 24px !important;
+    background: #fcfcfc !important;
+}
+
+.chase-configurator-root .ral-grid {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)) !important;
+    gap: 16px !important;
+}
+
+.chase-configurator-root .ral-swatch-item {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    cursor: pointer !important;
+    transition: transform 0.15s !important;
+}
+
+.chase-configurator-root .ral-swatch-item:hover {
+    transform: translateY(-2px) !important;
+}
+
+.chase-configurator-root .ral-color-block {
+    width: 100% !important;
+    aspect-ratio: 1 !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.03) !important;
+    margin-bottom: 8px !important;
+}
+
+.chase-configurator-root .ral-swatch-item.selected .ral-color-block {
+    outline: 3px solid var(--accent) !important;
+    outline-offset: 2px !important;
+}
+
+.chase-configurator-root .ral-item-code {
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    color: var(--text-muted) !important;
+    text-align: center !important;
+    margin-bottom: 2px !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .ral-item-name {
+    font-size: 11px !important;
+    line-height: 1.2 !important;
+    color: var(--text) !important;
+    text-align: center !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    font-family: var(--sans) !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .ral-empty-state {
+    text-align: center !important;
+    padding: 40px 20px !important;
+    color: var(--text-muted) !important;
+    font-style: italic !important;
+    font-family: var(--sans) !important;
+}
+
+/* ===== Notes textarea ===== */
+.chase-configurator-root .notes-textarea {
+    width: 100% !important;
+    background: var(--bg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    padding: 10px 12px !important;
+    color: var(--text) !important;
+    font-family: var(--sans) !important;
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+    resize: vertical !important;
+    outline: none !important;
+    transition: border-color 0.15s !important;
+    min-height: 60px !important;
+    box-shadow: none !important;
+}
+
+.chase-configurator-root .notes-textarea:focus-visible {
+    border-color: var(--accent) !important;
+}
+
+.chase-configurator-root .notes-textarea::placeholder {
+    color: var(--text-muted) !important;
+    opacity: 0.6 !important;
+}
+
+/* ===== Cart / Price bar ===== */
+.chase-configurator-root .cart-row {
+    display: flex !important;
+    gap: 10px !important;
+    align-items: stretch !important;
+}
+
+.chase-configurator-root .qty-field {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+    min-width: 56px !important;
+}
+
+.chase-configurator-root .qty-field label {
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    color: var(--text-muted) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+}
+
+.chase-configurator-root .qty-field input[type="number"] {
+    width: 56px !important;
+    background: var(--bg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    padding: 8px 6px !important;
+    color: var(--text) !important;
+    font-family: var(--sans) !important;
+    font-size: 14px !important;
+    text-align: center !important;
+    outline: none !important;
+    line-height: normal !important;
+    box-shadow: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+}
+
+.chase-configurator-root .qty-field input:focus-visible {
+    border-color: var(--accent) !important;
+}
+
+.chase-configurator-root .price-bar {
+    padding: 14px 18px !important;
+    border-top: 1px solid var(--border) !important;
+    background: var(--surface) !important;
+    flex-shrink: 0 !important;
+    border-bottom: none !important;
+    border-left: none !important;
+    border-right: none !important;
+}
+
+.chase-configurator-root .price-display {
+    display: flex !important;
+    align-items: baseline !important;
+    justify-content: space-between !important;
+    margin-bottom: 10px !important;
+}
+
+.chase-configurator-root .price-label {
+    font-size: 11px !important;
+    color: var(--text-muted) !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .price-value {
+    font-family: var(--mono) !important;
+    font-size: 26px !important;
+    font-weight: 700 !important;
+    color: var(--text) !important;
+    font-variant-numeric: tabular-nums !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .add-to-cart {
+    width: 100% !important;
+    padding: 12px !important;
+    background: var(--primary) !important;
+    border: none !important;
+    border-radius: var(--radius) !important;
+    color: #fff !important;
+    font-family: var(--sans) !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    cursor: pointer !important;
+    transition: background-color 0.15s !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .add-to-cart:hover {
+    background: var(--primary-hover) !important;
+}
+
+/* ===== Product description ===== */
+.chase-configurator-root .product-desc {
+    margin-bottom: 20px !important;
+    padding-bottom: 16px !important;
+    border-bottom: 1px solid var(--border-light) !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+}
+
+.chase-configurator-root .product-desc h2 {
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    margin-bottom: 8px !important;
+    color: var(--text) !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .product-desc-text {
+    font-size: 12.5px !important;
+    line-height: 1.65 !important;
+    color: var(--text-muted) !important;
+    max-height: 3.3em !important;
+    overflow: hidden !important;
+    transition: max-height 0.3s ease !important;
+    font-family: var(--sans) !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .product-desc-text.expanded {
+    max-height: 500px !important;
+}
+
+.chase-configurator-root .desc-toggle {
+    background: none !important;
+    border: none !important;
+    color: var(--accent) !important;
+    font-family: var(--sans) !important;
+    font-size: 11.5px !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    padding: 4px 0 0 !important;
+    display: inline-block !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .desc-toggle:hover {
+    text-decoration: underline !important;
+}
+
+/* ===== Measure note ===== */
+.chase-configurator-root .measure-note {
+    background: #faf7f2 !important;
+    border: 1px solid #e8dcc8 !important;
+    border-left: 3px solid var(--primary) !important;
+    border-radius: var(--radius) !important;
+    padding: 10px 12px !important;
+    margin-bottom: 18px !important;
+    font-size: 11.5px !important;
+    line-height: 1.55 !important;
+    color: #5a4e3a !important;
+    font-family: var(--sans) !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .measure-note a {
+    color: var(--primary-hover) !important;
+    font-weight: 600 !important;
+    text-decoration: none !important;
+    font-family: var(--sans) !important;
+}
+
+.chase-configurator-root .measure-note a:hover {
+    text-decoration: underline !important;
+}
+
+/* ===== AR buttons & overlays ===== */
+.chase-configurator-root .ar-btn-mobile {
+    display: none !important;
+}
+
+.chase-configurator-root .ar-btn {
+    padding: 6px 12px !important;
+    background: var(--accent) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: var(--radius) !important;
+    font-family: var(--sans) !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 5px !important;
+    transition: background-color 0.15s !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .ar-btn:hover {
+    background: var(--accent-hover) !important;
+}
+
+.chase-configurator-root .ar-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 1000 !important;
+    background: rgba(0, 0, 0, 0.85) !important;
+    display: none !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-direction: column !important;
+}
+
+.chase-configurator-root .ar-overlay.active {
+    display: flex !important;
+}
+
+.chase-configurator-root .ar-overlay model-viewer {
+    width: 90vw !important;
+    height: 75vh !important;
+    max-width: 800px !important;
+    background: #222 !important;
+    border-radius: 12px !important;
+}
+
+.chase-configurator-root .ar-close {
+    position: absolute !important;
+    top: 20px !important;
+    right: 24px !important;
+    width: 40px !important;
+    height: 40px !important;
+    border: none !important;
+    background: rgba(255, 255, 255, 0.15) !important;
+    color: #fff !important;
+    font-size: 22px !important;
+    border-radius: 50% !important;
+    cursor: pointer !important;
+    backdrop-filter: blur(4px) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    z-index: 1001 !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+}
+
+.chase-configurator-root .ar-close:hover {
+    background: rgba(255, 255, 255, 0.3) !important;
+}
+
+.chase-configurator-root .ar-loading {
+    color: #fff !important;
+    font-family: var(--sans) !important;
+    font-size: 13px !important;
+    margin-top: 12px !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+/* ===== QR overlay ===== */
+.chase-configurator-root .qr-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 2000 !important;
+    background: rgba(0, 0, 0, 0.85) !important;
+    display: none !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-direction: column !important;
+    backdrop-filter: blur(5px) !important;
+}
+
+.chase-configurator-root .qr-overlay.active {
+    display: flex !important;
+}
+
+.chase-configurator-root .qr-card {
+    background: var(--bg) !important;
+    padding: 30px !important;
+    border-radius: 16px !important;
+    text-align: center !important;
+    max-width: 90vw !important;
+    width: 320px !important;
+    position: relative !important;
+}
+
+.chase-configurator-root .qr-close {
+    position: absolute !important;
+    top: 10px !important;
+    right: 12px !important;
+    background: none !important;
+    border: none !important;
+    font-size: 20px !important;
+    color: var(--text-muted) !important;
+    cursor: pointer !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+}
+
+.chase-configurator-root .qr-close:hover {
+    color: var(--text) !important;
+}
+
+.chase-configurator-root .qr-title {
+    font-family: var(--sans) !important;
+    font-size: 18px !important;
+    font-weight: 700 !important;
+    margin-bottom: 10px !important;
+    color: var(--text) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .qr-desc {
+    font-family: var(--sans) !important;
+    font-size: 13px !important;
+    color: var(--text-muted) !important;
+    margin-bottom: 20px !important;
+    line-height: 1.5 !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .qr-canvas-container {
+    background: #fff !important;
+    padding: 10px !important;
+    border-radius: 8px !important;
+    border: 1px solid var(--border) !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* ===== Mobile AR prompt ===== */
+.chase-configurator-root .ar-mobile-prompt {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 3000 !important;
+    background: var(--bg) !important;
+    display: none !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-direction: column !important;
+    text-align: center !important;
+    padding: 24px !important;
+}
+
+.chase-configurator-root .ar-mobile-prompt.active {
+    display: flex !important;
+}
+
+.chase-configurator-root .ar-mobile-prompt h2 {
+    font-size: 22px !important;
+    margin-bottom: 12px !important;
+    font-family: var(--sans) !important;
+    color: var(--text) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    font-weight: 700 !important;
+}
+
+.chase-configurator-root .ar-mobile-prompt p {
+    font-size: 15px !important;
+    color: var(--text-muted) !important;
+    margin-bottom: 30px !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .launch-ar-big-btn {
+    padding: 16px 32px !important;
+    font-size: 18px !important;
+    font-weight: 700 !important;
+    font-family: var(--sans) !important;
+    background: var(--accent) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 30px !important;
+    cursor: pointer !important;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+/* ===== Breakdown toggle / panel ===== */
+.chase-configurator-root .bd-toggle {
+    background: none !important;
+    border: none !important;
+    color: var(--text-muted) !important;
+    font-size: 13px !important;
+    font-family: var(--sans) !important;
+    cursor: pointer !important;
+    padding: 0 !important;
+    margin-bottom: 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    transition: color 0.15s !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .bd-toggle:hover {
+    color: var(--accent) !important;
+}
+
+.chase-configurator-root .bd-toggle span {
+    display: inline-block !important;
+    transition: transform 0.2s !important;
+    font-size: 11px !important;
+}
+
+.chase-configurator-root .bd-toggle.open span {
+    transform: none !important;
+}
+
+.chase-configurator-root .bd-panel {
+    display: none !important;
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    padding: 14px !important;
+    margin-bottom: 20px !important;
+    font-family: var(--sans) !important;
+    font-size: 13px !important;
+    color: var(--text) !important;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.02) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .bd-panel.open {
+    display: block !important;
+}
+
+.chase-configurator-root .bd-row {
+    display: flex !important;
+    justify-content: space-between !important;
+    padding: 5px 0 !important;
+    color: var(--text-muted) !important;
+    font-family: var(--sans) !important;
+    font-size: 13px !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+}
+
+.chase-configurator-root .bd-sub {
+    display: flex !important;
+    justify-content: space-between !important;
+    padding: 10px 0 6px !important;
+    margin-top: 6px !important;
+    border-top: 1px dashed var(--border) !important;
+    font-weight: 500 !important;
+    color: var(--text) !important;
+    font-family: var(--sans) !important;
+    font-size: 13px !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    border-bottom: none !important;
+    border-left: none !important;
+    border-right: none !important;
+}
+
+.chase-configurator-root .bd-total {
+    display: flex !important;
+    justify-content: space-between !important;
+    padding-top: 10px !important;
+    margin-top: 6px !important;
+    border-top: 2px solid var(--border) !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    color: var(--text) !important;
+    font-family: var(--sans) !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    border-bottom: none !important;
+    border-left: none !important;
+    border-right: none !important;
+}
+
+/* ===== Mobile Responsive ===== */
+@media (max-width: 900px) {
+    .chase-configurator-root header {
+        display: none !important;
+    }
+
+    .chase-configurator-root {
+        overflow: auto !important;
+    }
+
+    .chase-configurator-root .app-layout {
+        flex-direction: column !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+    }
+
+    .chase-configurator-root .viewport {
+        flex: none !important;
+        height: 50vh !important;
+        height: 50dvh !important;
+        min-height: 0 !important;
+    }
+
+    .chase-configurator-root .sidebar {
+        width: 100% !important;
+        min-width: unset !important;
+        flex: 1 !important;
+        border-left: none !important;
+        border-top: 1px solid var(--border) !important;
+        max-height: none !important;
+        max-width: none !important;
+    }
+
+    .chase-configurator-root .sidebar-scroll {
+        padding: 14px 16px !important;
+    }
+
+    .chase-configurator-root .section {
+        margin-bottom: 16px !important;
+    }
+
+    .chase-configurator-root .viewport-controls {
+        top: 10px !important;
+        left: 10px !important;
+        gap: 4px !important;
+    }
+
+    .chase-configurator-root .vp-btn {
+        width: 28px !important;
+        height: 28px !important;
+        font-size: 11px !important;
+    }
+
+    .chase-configurator-root .viewport-controls .ar-btn.desktop-ar {
+        display: none !important;
+    }
+
+    .chase-configurator-root .ar-btn-mobile {
+        position: absolute !important;
+        bottom: 14px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        padding: 10px 20px !important;
+        background: var(--accent) !important;
+        color: #fff !important;
+        border: none !important;
+        border-radius: 24px !important;
+        font-family: var(--sans) !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        cursor: pointer !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25) !important;
+        z-index: 5 !important;
+        line-height: normal !important;
+        letter-spacing: normal !important;
+        text-transform: none !important;
+    }
+
+    .chase-configurator-root .dim-overlay {
+        top: 8px !important;
+        right: 8px !important;
+        font-size: 9px !important;
+        padding: 5px 8px !important;
+    }
+
+    .chase-configurator-root .viewport-badge {
+        display: none !important;
+    }
+
+    .chase-configurator-root .price-bar {
+        padding: 10px 14px !important;
+    }
+
+    .chase-configurator-root .bd-panel {
+        max-height: 28vh !important;
+        overflow-y: auto !important;
+        margin-bottom: 12px !important;
+    }
+
+    .chase-configurator-root .ar-overlay model-viewer {
+        width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        max-width: none !important;
+        border-radius: 0 !important;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .chase-configurator-root *,
+    .chase-configurator-root *::before,
+    .chase-configurator-root *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+    }
+}
