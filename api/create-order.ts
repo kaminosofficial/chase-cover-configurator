@@ -148,20 +148,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         const config: OrderConfig = req.body;
+        console.log('[DEBUG] Handler request body:', JSON.stringify(config));
 
         // Validate required fields
         if (!config.w || !config.l || !config.sk || !config.mat || !config.gauge) {
+            console.error('[DEBUG] Validation failed missing fields');
             return res.status(400).json({ error: 'Missing required configuration fields' });
         }
 
         // 1. Get Shopify Token dynamically
+        console.log('[DEBUG] Fetching Shopify token...');
         const shopifyAccessToken = await getShopifyAccessToken();
+        console.log('[DEBUG] Shopify token obtained.');
 
         // 2. Fetch pricing from Google Sheet (server-side — tamper-proof)
+        console.log('[DEBUG] Fetching pricing from sheet...');
         const pricing = await fetchPricingFromSheet();
+        console.log('[DEBUG] Pricing fetched.');
 
         // 3. Calculate price server-side
         const unitPrice = computePrice(config, pricing);
+        console.log('[DEBUG] Calculated unitPrice:', unitPrice);
         const quantity = Math.max(1, Math.min(99, Math.round(config.quantity || 1)));
 
         // 4. Build human-readable description
@@ -197,7 +204,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 use_customer_default_address: true,
             },
         };
+        console.log('[DEBUG] Draft Order Payload:', JSON.stringify(draftOrderPayload));
 
+        console.log('[DEBUG] Sending request to Shopify...');
         const shopifyRes = await fetch(
             `https://${SHOPIFY_STORE}/admin/api/2024-01/draft_orders.json`,
             {
