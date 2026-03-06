@@ -61,7 +61,7 @@ async function getShopifyAccessToken() {
 }
 
 async function fetchPricingFromSheet() {
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/pricing!A1:B20?key=${GOOGLE_SHEETS_API_KEY}`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/Sheet1!A1:B20?key=${GOOGLE_SHEETS_API_KEY}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Google Sheets API error: ${res.status}`);
     const json = await res.json();

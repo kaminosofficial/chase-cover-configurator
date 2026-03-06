@@ -11,7 +11,7 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 async function fetchPricing() {
     if (cache && Date.now() - cache.ts < CACHE_TTL) return cache.data;
 
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}!A1:B20?key=${API_KEY}`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/Sheet1!A1:B20?key=${API_KEY}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Google Sheets API error: ${res.status}`);
     const json = await res.json();
