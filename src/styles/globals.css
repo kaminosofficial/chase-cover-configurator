@@ -57,9 +57,11 @@ header {
   position: absolute; top: 14px; right: 14px;
   font-family: var(--mono); font-size: 11px; color: #666;
   background: rgba(255,255,255,0.88); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 8px 12px;
-  pointer-events: none; line-height: 1.7; backdrop-filter: blur(4px); z-index: 5;
+  border-radius: var(--radius); padding: 6px 8px;
+  pointer-events: auto; cursor: pointer; line-height: 1.7; backdrop-filter: blur(4px); z-index: 5;
 }
+.dim-overlay .dim-icon { font-size: 16px; line-height: 1; display: block; }
+.dim-overlay.dim-open { padding: 8px 12px; }
 .dim-overlay span { color: var(--accent); font-weight: 600; }
 
 .sidebar {

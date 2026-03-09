@@ -136,7 +136,7 @@ export function buildCoverWithoutCollars(grp: THREE.Group, config: ConfigState) 
     const L = config.l * SC;
     const skH = config.sk * SC;
     const T = (GAUGE_THICKNESS[config.gauge] || 0.0478) * SC;
-    const SLOPE = config.diag ? Math.sqrt(W * W + L * L) * 0.00875 : 0;
+    const SLOPE = config.diag ? 0.75 * SC : 0; // fixed 3/4 inch rise from edges to peak
 
     const mat = mkMat(config.mat, config.pc, config.pcCol);
 
@@ -221,7 +221,7 @@ export function buildCollarForHole(
     const L = config.l * SC;
     const skH = config.sk * SC;
     const T = (GAUGE_THICKNESS[config.gauge] || 0.0478) * SC;
-    const SLOPE = config.diag ? Math.sqrt(W * W + L * L) * 0.00875 : 0;
+    const SLOPE = config.diag ? 0.75 * SC : 0; // fixed 3/4 inch rise from edges to peak
 
     const COLLAR_SEGS = 48;
     const localRoofY = config.diag ? SLOPE * (1 - Math.max(Math.abs(hole.wx / (W / 2)), Math.abs(hole.wz / (L / 2)))) : 0;
@@ -313,11 +313,11 @@ function buildFlatTop(W: number, L: number, skH: number, T: number, holes: any[]
     grp.add(m);
 }
 
-function buildSlopedTop(W: number, L: number, skH: number, _T: number, SLOPE: number, holes: any[], mat: THREE.Material, grp: THREE.Group) {
+function buildSlopedTop(W: number, L: number, skH: number, T: number, SLOPE: number, holes: any[], mat: THREE.Material, grp: THREE.Group) {
     const hw = W / 2, hl = L / 2;
     const edgeY = skH;
 
-    const thickness = 0.05;
+    const thickness = T;
     const pts = [
         0, edgeY + SLOPE, 0,
         -hw, edgeY, -hl,

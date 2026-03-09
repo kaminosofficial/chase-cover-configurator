@@ -140,7 +140,19 @@ export function CollarGroup({ id, label }: Props) {
   // Dynamic max values based on cover dimensions
   const maxW = Math.max(0, config.w - collar.dia);
   const maxL = Math.max(0, config.l - collar.dia);
-  const maxDia = Math.min(30, config.w, config.l);
+
+  // Max diameter: must fit within cover AND leave room for other holes (with 1" gap each)
+  let maxDia = Math.min(config.w, config.l);
+  if (config.holes >= 2) {
+    const otherDias: number[] = [];
+    if (id !== 'A' && config.holes >= 1) otherDias.push(config.collarA.dia);
+    if (id !== 'B' && config.holes >= 2) otherDias.push(config.collarB.dia);
+    if (id !== 'C' && config.holes === 3) otherDias.push(config.collarC.dia);
+    const totalOtherDia = otherDias.reduce((s, d) => s + d, 0);
+    const gaps = otherDias.length * MIN_GAP;
+    maxDia = Math.min(maxDia, config.l - totalOtherDia - gaps);
+  }
+  maxDia = Math.max(3, maxDia);
 
   function handleCenteredChange(newCentered: boolean) {
     if (!newCentered) {

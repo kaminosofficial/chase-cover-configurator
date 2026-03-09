@@ -216,13 +216,24 @@
     background: rgba(255, 255, 255, 0.88) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius) !important;
-    padding: 8px 12px !important;
-    pointer-events: none !important;
+    padding: 6px 8px !important;
+    pointer-events: auto !important;
+    cursor: pointer !important;
     line-height: 1.7 !important;
     backdrop-filter: blur(4px) !important;
     z-index: 5 !important;
     letter-spacing: normal !important;
     text-transform: none !important;
+}
+
+.chase-configurator-root .dim-overlay .dim-icon {
+    font-size: 16px !important;
+    line-height: 1 !important;
+    display: block !important;
+}
+
+.chase-configurator-root .dim-overlay.dim-open {
+    padding: 8px 12px !important;
 }
 
 .chase-configurator-root .dim-overlay span {

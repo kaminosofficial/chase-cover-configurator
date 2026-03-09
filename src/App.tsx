@@ -30,6 +30,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const [descExpanded, setDescExpanded] = useState(false);
   const [bdOpen, setBdOpen] = useState(false);
   const [ralOpen, setRalOpen] = useState(false);
+  const [dimOpen, setDimOpen] = useState(false);
 
   const arViewerRef = useRef<any>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -235,11 +236,15 @@ export default function App({ productId, variantId }: AppProps = {}) {
             </button>
           </div>
 
-          {/* Dimension overlay top-right */}
-          <div className="dim-overlay">
-            {dimLines.map((line, i) => (
-              <div key={i}>{line}</div>
-            ))}
+          {/* Dimension overlay top-right — collapsible */}
+          <div className={`dim-overlay${dimOpen ? ' dim-open' : ''}`} onClick={() => setDimOpen(o => !o)}>
+            {dimOpen ? (
+              dimLines.map((line, i) => (
+                <div key={i}>{line}</div>
+              ))
+            ) : (
+              <span className="dim-icon" title="Show dimensions">📐</span>
+            )}
           </div>
 
           <div className="viewport-badge">Drag to orbit · Scroll to zoom · Right-drag to pan</div>
