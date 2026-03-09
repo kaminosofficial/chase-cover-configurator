@@ -64,9 +64,9 @@ export function applyConfigState(base64: string): Partial<ConfigState> {
       drip: !!s.drip, diag: !!s.diag, holes: s.holes || 0,
       mat: s.mat || 'galvanized', pc: !!s.pc, pcCol: s.pcCol || '#101010',
     };
-    if (s.cA) partial.collarA = { dia: parseFloat(s.cA.d), height: parseFloat(s.cA.h), centered: !!s.cA.c, offset1: parseFloat(s.cA.a1) || 0, offset2: parseFloat(s.cA.a2) || 0, offset3: 0, offset4: 0 };
-    if (s.cB) partial.collarB = { dia: parseFloat(s.cB.d), height: parseFloat(s.cB.h), centered: !!s.cB.c, offset1: parseFloat(s.cB.b1) || 0, offset2: parseFloat(s.cB.b2) || 0, offset3: 0, offset4: 0 };
-    if (s.cC) partial.collarC = { dia: parseFloat(s.cC.d), height: parseFloat(s.cC.h), centered: !!s.cC.c, offset1: parseFloat(s.cC.c1) || 0, offset2: parseFloat(s.cC.c2) || 0, offset3: 0, offset4: 0 };
+    if (s.cA) partial.collarA = { dia: parseFloat(s.cA.d), height: parseFloat(s.cA.h), centered: !!s.cA.c, offset1: parseFloat(s.cA.a1) || 0, offset2: parseFloat(s.cA.a2) || 0, offset3: 0, offset4: 0, stormCollar: false };
+    if (s.cB) partial.collarB = { dia: parseFloat(s.cB.d), height: parseFloat(s.cB.h), centered: !!s.cB.c, offset1: parseFloat(s.cB.b1) || 0, offset2: parseFloat(s.cB.b2) || 0, offset3: 0, offset4: 0, stormCollar: false };
+    if (s.cC) partial.collarC = { dia: parseFloat(s.cC.d), height: parseFloat(s.cC.h), centered: !!s.cC.c, offset1: parseFloat(s.cC.c1) || 0, offset2: parseFloat(s.cC.c2) || 0, offset3: 0, offset4: 0, stormCollar: false };
     return partial;
   } catch {
     return {};
