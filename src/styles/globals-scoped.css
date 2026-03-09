@@ -174,10 +174,9 @@
     display: flex !important;
     gap: 5px !important;
     z-index: 5 !important;
+}.chase-configurator-root .vp-group {
+    display: contents !important;
 }
-
-
-
 .chase-configurator-root .vp-btn {
     width: 32px !important;
     height: 32px !important;
@@ -1481,12 +1480,18 @@
         left: 10px !important;
         gap: 6px !important;
         display: flex !important;
-        flex-wrap: wrap !important;
-        justify-content: flex-start !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+    }
+
+    .chase-configurator-root .vp-group {
+        display: flex !important;
+        flex-direction: row !important;
+        gap: 5px !important;
     }
 
     .chase-configurator-root .vp-btn-move {
-        flex-basis: 100% !important;
+        flex-basis: auto !important;
         justify-content: center !important;
     }
 
