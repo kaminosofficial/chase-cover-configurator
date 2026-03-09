@@ -201,14 +201,12 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
           {/* Viewport controls top-left */}
           <div className="viewport-controls">
-            <div className="vp-group">
-              <button className="vp-btn" title="Reset" onClick={() => cameraActions.reset()}>⟳</button>
-              <button className="vp-btn" title="Top" onClick={() => cameraActions.top()}>⊤</button>
-              <button className="vp-btn" title="Front" onClick={() => cameraActions.front()}>◻</button>
-            </div>
+            <button className="vp-btn" title="Reset" onClick={() => cameraActions.reset()}>⟳</button>
+            <button className="vp-btn" title="Top" onClick={() => cameraActions.top()}>⊤</button>
+            <button className="vp-btn" title="Front" onClick={() => cameraActions.front()}>◻</button>
             {config.holes > 0 && (
               <button 
-                className="vp-btn vp-btn-move" 
+                className="vp-btn" 
                 title={config.moveHolesMode ? 'Done Moving Holes' : 'Move Holes'}
                 style={{ 
                   width: 'auto', padding: '0 12px', gap: '6px', fontWeight: 600, fontSize: '12px',
