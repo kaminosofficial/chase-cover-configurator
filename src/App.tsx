@@ -201,11 +201,9 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
           {/* Viewport controls top-left */}
           <div className="viewport-controls">
-            <div className="vp-group">
-              <button className="vp-btn" title="Reset" onClick={() => cameraActions.reset()}>⟳</button>
-              <button className="vp-btn" title="Top" onClick={() => cameraActions.top()}>⊤</button>
-              <button className="vp-btn" title="Front" onClick={() => cameraActions.front()}>◻</button>
-            </div>
+            <button className="vp-btn" title="Reset" onClick={() => cameraActions.reset()}>⟳</button>
+            <button className="vp-btn" title="Top" onClick={() => cameraActions.top()}>⊤</button>
+            <button className="vp-btn" title="Front" onClick={() => cameraActions.front()}>◻</button>
             {config.holes > 0 && (
               <button 
                 className="vp-btn" 
