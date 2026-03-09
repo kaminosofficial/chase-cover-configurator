@@ -178,6 +178,7 @@
 
 .chase-configurator-root .vp-group {
     display: flex !important;
+    flex-direction: row !important;
     gap: 5px !important;
 }
 
@@ -1483,6 +1484,7 @@
         top: 10px !important;
         left: 10px !important;
         gap: 6px !important;
+        display: flex !important;
         flex-direction: column !important;
         align-items: flex-start !important;
     }
