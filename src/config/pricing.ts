@@ -55,7 +55,6 @@ export async function loadPricingFromAPI(apiBase: string) {
             GAUGE_MULT: { ...PRICING.GAUGE_MULT, ...(data.GAUGE_MULT ?? {}) },
             MATERIAL_MULT: { ...PRICING.MATERIAL_MULT, ...(data.MATERIAL_MULT ?? {}) },
         };
-        console.log('[ChaseConfigurator] Pricing loaded from API');
     } catch (err) {
         console.warn('[ChaseConfigurator] Failed to fetch pricing from API, using defaults:', err);
     }

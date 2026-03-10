@@ -1,6 +1,6 @@
 import { Html, Line } from '@react-three/drei';
 import { useConfigStore } from '../../store/configStore';
-import { holeWorld, SC } from '../../utils/geometry';
+import { getDiagonalSlopeRise, holeWorld, SC } from '../../utils/geometry';
 import { formatFrac } from '../../utils/format';
 
 const HOLE_COLOR: Record<string, string> = {
@@ -19,7 +19,7 @@ export function DimensionOverlay() {
     const W = config.w * SC;
     const L = config.l * SC;
     const skH = config.sk * SC;
-    const SLOPE = config.diag ? Math.sqrt(W * W + L * L) * 0.0175 : 0;
+    const SLOPE = config.diag ? getDiagonalSlopeRise(W, L) : 0;
     const baseY = skH + SLOPE + 0.018;
 
     // --- Side labels: Top=-W/2(left in 3D), Right=-L/2(back), Bottom=+W/2(right), Left=+L/2(front) ---

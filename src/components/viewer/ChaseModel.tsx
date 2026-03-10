@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { useConfigStore } from '../../store/configStore';
-import { buildCoverWithoutCollars, buildCollarForHole, holeWorld, clampDragToOffsets, mkMat, SC } from '../../utils/geometry';
+import { buildCoverWithoutCollars, buildCollarForHole, holeWorld, clampDragToOffsets, getDiagonalSlopeRise, mkMat, SC } from '../../utils/geometry';
 
 function HoleComponent({ id, config, activeId, setActiveId, mat }: { id: 'A'|'B'|'C', config: any, activeId: string | null, setActiveId: (id: string | null) => void, mat: THREE.Material }) {
     const setCollar = useConfigStore(state => state.setCollar);
@@ -45,10 +45,13 @@ function HoleComponent({ id, config, activeId, setActiveId, mat }: { id: 'A'|'B'
             if (ray.ray.intersectPlane(planeRef.current, target)) {
                 // Apply the offset saved on pointer down
                 target.sub(dragOffsetRef.current);
-                
+
                 const st = configRef.current;
                 const safe = clampDragToOffsets(id, target.x, target.z, st);
-                
+
+                // If still colliding after all clamping, don't update — keep last valid position
+                if (safe.colliding) return;
+
                 const curr = st[`collar${id}` as 'collarA'|'collarB'|'collarC'];
                 if (Math.abs(curr.offset1 - safe.offset1) > 0.001 || Math.abs(curr.offset2 - safe.offset2) > 0.001) {
                     setCollar(id, {
@@ -110,7 +113,7 @@ function HoleComponent({ id, config, activeId, setActiveId, mat }: { id: 'A'|'B'
     const W = config.w * SC;
     const L = config.l * SC;
     const skH = config.sk * SC;
-    const SLOPE = config.diag ? Math.sqrt(W * W + L * L) * 0.00875 : 0;
+    const SLOPE = config.diag ? getDiagonalSlopeRise(W, L) : 0;
     const localRoofY = config.diag ? SLOPE * (1 - Math.max(Math.abs(hole.wx / (W / 2)), Math.abs(hole.wz / (L / 2)))) : 0;
     const topY = skH + localRoofY + hole.h;
 
@@ -242,9 +245,7 @@ export function ChaseModel() {
 
         // Rebuild full procedural geometry and attach to group
         try {
-            console.time('[ChaseModel] Rebuild Geometry');
             buildCoverWithoutCollars(grp, config);
-            console.timeEnd('[ChaseModel] Rebuild Geometry');
             (window as any).__chaseGroup = grp;
         } catch (e) {
             console.error("Failed to build geometry", e);

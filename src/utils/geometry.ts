@@ -1,9 +1,11 @@
-import * as THREE from 'three';
+﻿import * as THREE from 'three';
 import { CSG } from 'three-csg-ts';
 import type { ConfigState, CollarState } from '../store/configStore';
 
 export const SC = 0.02; // world units per inch
 export const MIN_GAP_INCHES = 1; // minimum 1 inch gap between holes
+export const STORM_COLLAR_HEIGHT_INCHES = 2.5;
+export const MAX_DIAGONAL_RISE_INCHES = 0.75;
 
 export function mkMat(
     mat: 'galvanized' | 'copper',
@@ -34,101 +36,164 @@ export function colH(id: 'A' | 'B' | 'C', config: ConfigState): number {
     return getCollarConfig(id, config).height * SC;
 }
 
+export function getDiagonalSlopeRise(W: number, L: number): number {
+    return Math.min(Math.sqrt(W * W + L * L) * 0.015, MAX_DIAGONAL_RISE_INCHES * SC);
+}
+
 export function holeWorld(id: 'A' | 'B' | 'C', config: ConfigState): { wx: number; wz: number; r: number; h: number; id: string } {
     const collar = getCollarConfig(id, config);
     const r = holeR(id, config);
     const h = colH(id, config);
-    const MIN_GAP = MIN_GAP_INCHES * SC; // 1 inch minimum gap between holes
+
+    // Safety clamp: ensure hole edge stays within cover boundaries
+    const halfW = (config.w / 2) * SC;
+    const halfL = (config.l / 2) * SC;
 
     if (collar.centered) {
         if (config.holes === 1) return { wx: 0, wz: 0, r, h, id };
+
+        // Fixed-position centered layout:
+        // Each hole gets a fixed slot that does NOT depend on other holes' diameters.
+        // This ensures changing one hole's diameter never moves another hole.
+        // The maxDia constraint in CollarGroup prevents overlap.
+
         if (config.holes === 2) {
-            const rA = (getCollarConfig('A', config).dia / 2) * SC;
-            const rB = (getCollarConfig('B', config).dia / 2) * SC;
-            const defaultSpacing = (config.l / 4) * SC;
-            const minSpacing = rA + rB + MIN_GAP;
-            const spacing = Math.max(defaultSpacing, minSpacing);
-            if (id === 'A') return { wx: 0, wz: spacing, r, h, id };
-            if (id === 'B') return { wx: 0, wz: -spacing, r, h, id };
+            // A at +L/4, B at -L/4 (fixed positions)
+            const slotPos = halfL / 2; // L/4 in world units
+            if (id === 'A') return { wx: 0, wz: slotPos, r, h, id };
+            if (id === 'B') return { wx: 0, wz: -slotPos, r, h, id };
         }
+
         if (config.holes === 3) {
-            const rA = (getCollarConfig('A', config).dia / 2) * SC;
-            const rB = (getCollarConfig('B', config).dia / 2) * SC;
-            const rC = (getCollarConfig('C', config).dia / 2) * SC;
-            const defaultAB = (config.l / 3) * SC;
-            const defaultBC = (config.l / 3) * SC;
-            const minAB = rA + rB + MIN_GAP;
-            const minBC = rB + rC + MIN_GAP;
-            const spacingAB = Math.max(defaultAB, minAB);
-            const spacingBC = Math.max(defaultBC, minBC);
-            if (id === 'A') return { wx: 0, wz: spacingAB, r, h, id };
+            // A at +L/3, B at center, C at -L/3 (fixed positions)
+            const slotPos = (2 * halfL) / 3; // L/3 in world units
+            if (id === 'A') return { wx: 0, wz: slotPos, r, h, id };
             if (id === 'B') return { wx: 0, wz: 0, r, h, id };
-            if (id === 'C') return { wx: 0, wz: -spacingBC, r, h, id };
+            if (id === 'C') return { wx: 0, wz: -slotPos, r, h, id };
         }
     }
 
     // Uses offset1 as distance from bottom edge (Width / 2)
     // Uses offset2 as distance from left edge (Length / 2)
-    const cz = (config.l / 2 - collar.offset2) * SC - r;
-    const cx = (config.w / 2 - collar.offset1) * SC - r;
+    let cz = (config.l / 2 - collar.offset2) * SC - r;
+    let cx = (config.w / 2 - collar.offset1) * SC - r;
+
+    // Clamp to cover boundaries (safety net for manual offset mode)
+    cx = Math.max(-halfW + r, Math.min(halfW - r, cx));
+    cz = Math.max(-halfL + r, Math.min(halfL - r, cz));
 
     return { wx: cx, wz: cz, r, h, id };
 }
 
 export function clampDragToOffsets(id: 'A' | 'B' | 'C', cx: number, cz: number, config: ConfigState) {
     const collar = id === 'A' ? config.collarA : id === 'B' ? config.collarB : config.collarC;
+    const collarKey = id === 'A' ? 'collarA' : id === 'B' ? 'collarB' : 'collarC';
     const r = (collar.dia / 2) * SC;
-    
-    // Other holes to check collisions against
+    const maxOffset1 = Math.max(0, config.w - collar.dia);
+    const maxOffset2 = Math.max(0, config.l - collar.dia);
+
     const otherIds: ('A'|'B'|'C')[] = [];
     if (config.holes >= 1 && id !== 'A') otherIds.push('A');
     if (config.holes >= 2 && id !== 'B') otherIds.push('B');
     if (config.holes === 3 && id !== 'C') otherIds.push('C');
 
-    // Prevent passing cover boundaries
-    // At wx = max Right, offset1 = 0 -> cx = w/2*SC - r
-    // At wx = max Left, offset1 = max -> cx = -w/2*SC + r
     const maxCx = (config.w / 2) * SC - r;
     const minCx = (-config.w / 2) * SC + r;
     const maxCz = (config.l / 2) * SC - r;
     const minCz = (-config.l / 2) * SC + r;
-    
-    let safeCx = Math.max(minCx, Math.min(maxCx, cx));
-    let safeCz = Math.max(minCz, Math.min(maxCz, cz));
+    const clampX = (value: number) => Math.max(minCx, Math.min(maxCx, value));
+    const clampZ = (value: number) => Math.max(minCz, Math.min(maxCz, value));
 
-    // Collision against other holes
+    let safeCx = clampX(cx);
+    let safeCz = clampZ(cz);
+
+    for (let pass = 0; pass < 8; pass++) {
+        let anyCollision = false;
+
+        for (const otherId of otherIds) {
+            const other = holeWorld(otherId, config);
+            const dx = safeCx - other.wx;
+            const dz = safeCz - other.wz;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            const minDist = r + other.r + MIN_GAP_INCHES * SC;
+
+            if (dist < minDist - 0.0005) {
+                anyCollision = true;
+
+                if (dist < 0.0005) {
+                    const directions: Array<[number, number]> = id > otherId
+                        ? [[1, 0], [0, 1], [-1, 0], [0, -1]]
+                        : [[-1, 0], [0, -1], [1, 0], [0, 1]];
+                    let bestCx = safeCx;
+                    let bestCz = safeCz;
+                    let bestDist = -1;
+                    let bestError = Number.POSITIVE_INFINITY;
+
+                    for (const [nx, nz] of directions) {
+                        const candidateCx = clampX(other.wx + nx * minDist);
+                        const candidateCz = clampZ(other.wz + nz * minDist);
+                        const candidateDx = candidateCx - other.wx;
+                        const candidateDz = candidateCz - other.wz;
+                        const candidateDist = Math.sqrt(candidateDx * candidateDx + candidateDz * candidateDz);
+                        const candidateError = Math.sqrt((candidateCx - safeCx) * (candidateCx - safeCx) + (candidateCz - safeCz) * (candidateCz - safeCz));
+
+                        if (candidateDist > bestDist + 0.0005 || (Math.abs(candidateDist - bestDist) <= 0.0005 && candidateError < bestError)) {
+                            bestCx = candidateCx;
+                            bestCz = candidateCz;
+                            bestDist = candidateDist;
+                            bestError = candidateError;
+                        }
+                    }
+
+                    safeCx = bestCx;
+                    safeCz = bestCz;
+                } else {
+                    const scale = minDist / dist;
+                    safeCx = clampX(other.wx + dx * scale);
+                    safeCz = clampZ(other.wz + dz * scale);
+                }
+            }
+        }
+
+        if (!anyCollision) break;
+    }
+
+    let offset1 = config.w / 2 - (safeCx + r) / SC;
+    let offset2 = config.l / 2 - (safeCz + r) / SC;
+
+    offset1 = Math.max(0, Math.min(maxOffset1, Math.round(offset1 * 8) / 8));
+    offset2 = Math.max(0, Math.min(maxOffset2, Math.round(offset2 * 8) / 8));
+
+    const offset3 = Math.max(0, Math.min(maxOffset1, config.w - collar.dia - offset1));
+    const offset4 = Math.max(0, Math.min(maxOffset2, config.l - collar.dia - offset2));
+
+    const snappedConfig = {
+        ...config,
+        [collarKey]: {
+            ...collar,
+            centered: false,
+            offset1,
+            offset2,
+            offset3,
+            offset4,
+        },
+    } as ConfigState;
+
+    const snappedHole = holeWorld(id, snappedConfig);
+    let stillColliding = false;
     for (const otherId of otherIds) {
-        const other = holeWorld(otherId, config);
-        const dx = safeCx - other.wx;
-        const dz = safeCz - other.wz;
+        const other = holeWorld(otherId, snappedConfig);
+        const dx = snappedHole.wx - other.wx;
+        const dz = snappedHole.wz - other.wz;
         const dist = Math.sqrt(dx * dx + dz * dz);
-        const minDist = r + other.r + MIN_GAP_INCHES * SC;
-
-        if (dist < minDist && dist > 0.001) {
-            // Push back along collision normal
-            const scale = minDist / dist;
-            safeCx = other.wx + dx * scale;
-            safeCz = other.wz + dz * scale;
-            // Re-clamp to boundaries just in case push-back pushed us off cover
-            safeCx = Math.max(minCx, Math.min(maxCx, safeCx));
-            safeCz = Math.max(minCz, Math.min(maxCz, safeCz));
+        const minDist = snappedHole.r + other.r + MIN_GAP_INCHES * SC;
+        if (dist < minDist - 0.0005) {
+            stillColliding = true;
+            break;
         }
     }
 
-    // Convert safe local coordinates back to offsets in inches
-    // cx = (w/2 - offset1) * SC - r  => offset1 = w/2 - (cx + r)/SC
-    // cz = (l/2 - offset2) * SC - r  => offset2 = l/2 - (cz + r)/SC
-    let offset1 = config.w / 2 - (safeCx + r) / SC;
-    let offset2 = config.l / 2 - (safeCz + r) / SC;
-    
-    // Snap to 1/8" increments
-    offset1 = Math.max(0, Math.ceil(offset1 * 8) / 8);
-    offset2 = Math.max(0, Math.ceil(offset2 * 8) / 8);
-    
-    const offset3 = Math.max(0, config.w - collar.dia - offset1);
-    const offset4 = Math.max(0, config.l - collar.dia - offset2);
-
-    return { offset1, offset2, offset3, offset4 };
+    return { offset1, offset2, offset3, offset4, colliding: stillColliding };
 }
 
 export function buildCoverWithoutCollars(grp: THREE.Group, config: ConfigState) {
@@ -136,7 +201,7 @@ export function buildCoverWithoutCollars(grp: THREE.Group, config: ConfigState) 
     const L = config.l * SC;
     const skH = config.sk * SC;
     const T = (GAUGE_THICKNESS[config.gauge] || 0.0478) * SC;
-    const SLOPE = config.diag ? 0.75 * SC : 0; // fixed 3/4 inch rise from edges to peak
+    const SLOPE = config.diag ? getDiagonalSlopeRise(W, L) : 0;
 
     const mat = mkMat(config.mat, config.pc, config.pcCol);
 
@@ -166,11 +231,11 @@ export function buildCoverWithoutCollars(grp: THREE.Group, config: ConfigState) 
     addSk(L + T, -W / 2, 0, Math.PI / 2);
     addSk(L + T, W / 2, 0, Math.PI / 2);
 
-    // Drip Edge — 0.5" outward at 45 degrees
+    // Drip Edge â€” 0.5" outward at 45 degrees
     if (config.drip) {
         const dy = 0;
         const lipOut = 0.5 * SC;  // 0.5 inch horizontal extension
-        const lipDrop = 0.5 * SC; // 0.5 inch vertical drop → 45° angle
+        const lipDrop = 0.5 * SC; // 0.5 inch vertical drop â†’ 45Â° angle
 
         function addDrip(len: number, ox: number, oz: number, ix: number, iz: number) {
             const g = new THREE.BufferGeometry();
@@ -213,42 +278,46 @@ export function buildCollarForHole(
     config: ConfigState,
     mat: THREE.Material
 ) {
-    // Only render collar when storm collar is enabled
-    const collar = getCollarConfig(hole.id as 'A' | 'B' | 'C', config);
-    if (!collar.stormCollar) return;
-
     const W = config.w * SC;
     const L = config.l * SC;
     const skH = config.sk * SC;
     const T = (GAUGE_THICKNESS[config.gauge] || 0.0478) * SC;
-    const SLOPE = config.diag ? 0.75 * SC : 0; // fixed 3/4 inch rise from edges to peak
+    const SLOPE = config.diag ? getDiagonalSlopeRise(W, L) : 0;
 
     const COLLAR_SEGS = 48;
     const localRoofY = config.diag ? SLOPE * (1 - Math.max(Math.abs(hole.wx / (W / 2)), Math.abs(hole.wz / (L / 2)))) : 0;
     const topY = skH + localRoofY + hole.h;
+    const roofSurfaceY = (absPx: number, absPz: number) => {
+        if (!config.diag) return skH;
+        const npx = absPx / (W / 2);
+        const npz = absPz / (L / 2);
+        const d = Math.max(Math.abs(npx), Math.abs(npz));
+        return skH + SLOPE * (1 - d);
+    };
+
+    // Determine collar config and whether storm collar is active
+    const collarCfg = hole.id === 'A' ? config.collarA : hole.id === 'B' ? config.collarB : config.collarC;
+    const stormEnabled = collarCfg.stormCollar;
+
+    // Storm cone top radius = 1" smaller than hole radius (0.5" smaller per side)
+    const stormTopR = Math.max(T * 2, hole.r - 0.5 * SC);
+    // When storm collar is enabled, the collar cylinder narrows to match the cone top seamlessly
+    const collarR = stormEnabled ? stormTopR : hole.r;
 
     const colVerts: number[] = [];
     const colIdx: number[] = [];
 
     for (let i = 0; i < COLLAR_SEGS; i++) {
         const a = (i / COLLAR_SEGS) * Math.PI * 2;
-        // Generate relative to hole center (0, 0) since TransformControls will move the group
-        const px = Math.cos(a) * hole.r;
-        const pz = Math.sin(a) * hole.r;
-        
-        // For the bottom Y, we must find the roof height at the ABSOLUTE position
+        // Generate relative to hole center (0, 0) since group position handles translation
+        const px = Math.cos(a) * collarR;
+        const pz = Math.sin(a) * collarR;
+
+        // For the bottom Y, find the roof height at the ABSOLUTE position
         const absPx = hole.wx + px;
         const absPz = hole.wz + pz;
 
-        let btmY: number;
-        if (config.diag) {
-            const npx = absPx / (W / 2);
-            const npz = absPz / (L / 2);
-            const d = Math.max(Math.abs(npx), Math.abs(npz));
-            btmY = skH + SLOPE * (1 - d) - 0.002;
-        } else {
-            btmY = skH - 0.002;
-        }
+        const btmY = roofSurfaceY(absPx, absPz) - 0.002;
 
         colVerts.push(px, topY, pz);
         colVerts.push(px, btmY, pz);
@@ -272,16 +341,179 @@ export function buildCollarForHole(
     cMesh.castShadow = true;
     grp.add(cMesh);
 
-    const lo = hole.r + T;
-    const li = hole.r - T * 0.5;
+    // Top ring cap for the collar
+    const lo = collarR + T;
+    const li = collarR - T * 0.5;
     const rG = new THREE.RingGeometry(li, lo, 32);
     const rm = new THREE.Mesh(rG, mat.clone());
     rm.rotation.x = -Math.PI / 2;
-    rm.position.set(0, topY + 0.001, 0); // local to group
+    rm.position.set(0, topY + 0.001, 0);
     grp.add(rm);
-    
-    // Removal of visual flared storm collar per user request. 
-    // The collarHeight state still controls the main vertical collar height.
+
+    // Storm collar: conical flashing at the base of the collar
+    if (stormEnabled) {
+        const baseY = skH + localRoofY; // cover surface at this hole's location
+
+        // Bottom of cone: flares out ~3" beyond the hole edge
+        const stormBotR = hole.r + 3 * SC;
+        // Height: fixed at 2.5 inches
+        const stormH = STORM_COLLAR_HEIGHT_INCHES * SC;
+        const seamCenterAngle = Math.PI / 2;
+        const seamGap = 0.12 * SC;
+        const coneGapAngle = Math.min(Math.PI / 20, seamGap / Math.max(stormBotR, 0.001));
+        const coneThetaStart = seamCenterAngle + coneGapAngle / 2;
+        const coneThetaLength = Math.PI * 2 - coneGapAngle;
+
+        // Build the storm collar as a roof-following frustum so it never pokes through the cover from below.
+        const stormSegs = 64;
+        const stormLift = 0.0004;
+        const coneVerts: number[] = [];
+        const coneIdx: number[] = [];
+
+        for (let i = 0; i <= stormSegs; i++) {
+            const t = i / stormSegs;
+            const a = coneThetaStart + coneThetaLength * t;
+            const topPx = Math.cos(a) * stormTopR;
+            const topPz = Math.sin(a) * stormTopR;
+            const botPx = Math.cos(a) * stormBotR;
+            const botPz = Math.sin(a) * stormBotR;
+            const bottomY = roofSurfaceY(hole.wx + botPx, hole.wz + botPz) + stormLift;
+
+            coneVerts.push(topPx, baseY + stormH, topPz);
+            coneVerts.push(botPx, bottomY, botPz);
+        }
+
+        for (let i = 0; i < stormSegs; i++) {
+            const cur = i * 2;
+            const next = (i + 1) * 2;
+            coneIdx.push(cur, next, cur + 1);
+            coneIdx.push(next, next + 1, cur + 1);
+        }
+
+        const coneGeo = new THREE.BufferGeometry();
+        coneGeo.setAttribute('position', new THREE.Float32BufferAttribute(coneVerts, 3));
+        coneGeo.setIndex(coneIdx);
+        coneGeo.computeVertexNormals();
+        const coneMat = (mat as THREE.MeshStandardMaterial).clone();
+        coneMat.side = THREE.DoubleSide;
+        const coneMesh = new THREE.Mesh(coneGeo, coneMat);
+        coneMesh.castShadow = true;
+        grp.add(coneMesh);
+
+        // Top band with a narrower split and mid-seam tightening hardware.
+        const bandH = 0.18 * SC;
+        const bandR = stormTopR + T * 1.1;
+        const bandGapAngle = Math.min(Math.PI / 16, seamGap * 0.9 / Math.max(bandR, 0.001));
+        const bandGeo = new THREE.CylinderGeometry(
+            bandR,
+            bandR,
+            bandH,
+            64,
+            1,
+            true,
+            seamCenterAngle + bandGapAngle / 2,
+            Math.PI * 2 - bandGapAngle
+        );
+        const bandMat = (mat as THREE.MeshStandardMaterial).clone();
+        bandMat.metalness = Math.min(1, bandMat.metalness + 0.06);
+        bandMat.roughness = Math.max(0.12, bandMat.roughness - 0.05);
+        const bandMesh = new THREE.Mesh(bandGeo, bandMat);
+        bandMesh.position.set(0, baseY + stormH - bandH / 2 + 0.01 * SC, 0);
+        bandMesh.castShadow = true;
+        grp.add(bandMesh);
+
+        const hardwareGroup = new THREE.Group();
+        hardwareGroup.rotation.y = -seamCenterAngle;
+        grp.add(hardwareGroup);
+
+        const hardwareT = 0.58;
+        const hardwareY = baseY + stormH * hardwareT;
+        const hardwareR = THREE.MathUtils.lerp(stormBotR, stormTopR, hardwareT);
+
+        const strapThickness = 0.05 * SC;
+        const strapHeight = 0.9 * SC;
+        const strapWidth = 0.22 * SC;
+        const strapX = hardwareR + strapThickness / 2 + T * 0.3;
+        const strapZ = seamGap / 2 + strapWidth / 2 - 0.015 * SC;
+        const strapGeo = new THREE.BoxGeometry(strapThickness, strapHeight, strapWidth);
+
+        const strapFront = new THREE.Mesh(strapGeo, bandMat.clone());
+        strapFront.position.set(strapX, hardwareY, strapZ);
+        strapFront.castShadow = true;
+        hardwareGroup.add(strapFront);
+
+        const strapBack = new THREE.Mesh(strapGeo, bandMat.clone());
+        strapBack.position.set(strapX, hardwareY, -strapZ);
+        strapBack.castShadow = true;
+        hardwareGroup.add(strapBack);
+
+        const bridgePlateGeo = new THREE.BoxGeometry(strapThickness * 0.85, 0.12 * SC, seamGap + strapWidth * 1.2);
+        const bridgePlate = new THREE.Mesh(bridgePlateGeo, bandMat.clone());
+        bridgePlate.position.set(strapX - strapThickness * 0.08, hardwareY - strapHeight * 0.16, 0);
+        bridgePlate.castShadow = true;
+        hardwareGroup.add(bridgePlate);
+
+        const sleeveRadius = 0.1 * SC;
+        const sleeveLength = seamGap + 0.12 * SC;
+        const sleeveGeo = new THREE.CylinderGeometry(sleeveRadius, sleeveRadius, sleeveLength, 20);
+        const sleeveMat = bandMat.clone();
+        sleeveMat.roughness = Math.max(0.18, sleeveMat.roughness - 0.04);
+        const sleeveMesh = new THREE.Mesh(sleeveGeo, sleeveMat);
+        sleeveMesh.rotation.x = Math.PI / 2;
+        sleeveMesh.position.set(strapX - strapThickness * 0.1, hardwareY + strapHeight * 0.06, 0);
+        sleeveMesh.castShadow = true;
+        hardwareGroup.add(sleeveMesh);
+
+        const boltRadius = 0.055 * SC;
+        const boltLength = seamGap + strapWidth * 2 + 0.22 * SC;
+        const boltY = hardwareY + strapHeight * 0.06;
+        const boltGeo = new THREE.CylinderGeometry(boltRadius, boltRadius, boltLength, 18);
+        const boltMat = bandMat.clone();
+        boltMat.metalness = Math.min(1, boltMat.metalness + 0.08);
+        boltMat.roughness = Math.max(0.1, boltMat.roughness - 0.08);
+        const boltMesh = new THREE.Mesh(boltGeo, boltMat);
+        boltMesh.rotation.x = Math.PI / 2;
+        boltMesh.position.set(strapX, boltY, 0);
+        boltMesh.castShadow = true;
+        hardwareGroup.add(boltMesh);
+
+        const washerRadius = 0.11 * SC;
+        const washerThickness = 0.035 * SC;
+        const washerGeo = new THREE.CylinderGeometry(washerRadius, washerRadius, washerThickness, 24);
+        const washerOffset = seamGap / 2 + strapWidth + washerThickness;
+
+        const washerFront = new THREE.Mesh(washerGeo, boltMat.clone());
+        washerFront.rotation.x = Math.PI / 2;
+        washerFront.position.set(strapX, boltY, washerOffset);
+        washerFront.castShadow = true;
+        hardwareGroup.add(washerFront);
+
+        const washerBack = new THREE.Mesh(washerGeo, boltMat.clone());
+        washerBack.rotation.x = Math.PI / 2;
+        washerBack.position.set(strapX, boltY, -washerOffset);
+        washerBack.castShadow = true;
+        hardwareGroup.add(washerBack);
+
+        const headRadius = 0.16 * SC;
+        const headLength = 0.12 * SC;
+        const headGeo = new THREE.CylinderGeometry(headRadius, headRadius, headLength, 6);
+        const headMesh = new THREE.Mesh(headGeo, boltMat.clone());
+        headMesh.rotation.x = Math.PI / 2;
+        headMesh.rotation.z = Math.PI / 6;
+        headMesh.position.set(strapX, boltY, washerOffset + headLength * 0.7);
+        headMesh.castShadow = true;
+        hardwareGroup.add(headMesh);
+
+        const nutRadius = 0.15 * SC;
+        const nutLength = 0.14 * SC;
+        const nutGeo = new THREE.CylinderGeometry(nutRadius, nutRadius, nutLength, 6);
+        const nutMesh = new THREE.Mesh(nutGeo, boltMat.clone());
+        nutMesh.rotation.x = Math.PI / 2;
+        nutMesh.rotation.z = Math.PI / 6;
+        nutMesh.position.set(strapX, boltY, -(washerOffset + nutLength * 0.7));
+        nutMesh.castShadow = true;
+        hardwareGroup.add(nutMesh);
+    }
 }
 
 
@@ -317,23 +549,33 @@ function buildSlopedTop(W: number, L: number, skH: number, T: number, SLOPE: num
     const hw = W / 2, hl = L / 2;
     const edgeY = skH;
 
-    const thickness = T;
+    const thickness = T; // Use actual gauge thickness
     const pts = [
-        0, edgeY + SLOPE, 0,
-        -hw, edgeY, -hl,
-        hw, edgeY, -hl,
-        hw, edgeY, hl,
-        -hw, edgeY, hl,
-        0, edgeY + SLOPE - thickness, 0,
-        -hw, edgeY - thickness, -hl,
-        hw, edgeY - thickness, -hl,
-        hw, edgeY - thickness, hl,
-        -hw, edgeY - thickness, hl
+        // Top surface vertices
+        0, edgeY + SLOPE, 0, // 0: Peak
+        -hw, edgeY, -hl,     // 1: Top Left
+        hw, edgeY, -hl,      // 2: Top Right
+        hw, edgeY, hl,       // 3: Bottom Right
+        -hw, edgeY, hl,      // 4: Bottom Left
+        // Bottom surface vertices (shifted down by thickness)
+        0, edgeY + SLOPE - thickness, 0, // 5: BPeak
+        -hw, edgeY - thickness, -hl,     // 6: BTL
+        hw, edgeY - thickness, -hl,      // 7: BTR
+        hw, edgeY - thickness, hl,       // 8: BBR
+        -hw, edgeY - thickness, hl       // 9: BBL
     ];
 
     const indices = [
-        0, 2, 1, 0, 3, 2, 0, 4, 3, 0, 1, 4,
-        5, 6, 7, 5, 7, 8, 5, 8, 9, 5, 9, 6,
+        0, 2, 1, // Top Back
+        0, 3, 2, // Top Right
+        0, 4, 3, // Top Front
+        0, 1, 4, // Top Left
+        // Bottom faces
+        5, 6, 7, // Bottom Back
+        5, 7, 8, // Bottom Right
+        5, 8, 9, // Bottom Front
+        5, 9, 6, // Bottom Left
+        // Side walls (closing the thin edge)
         1, 2, 7, 1, 7, 6,
         2, 3, 8, 2, 8, 7,
         3, 4, 9, 3, 9, 8,
@@ -347,31 +589,27 @@ function buildSlopedTop(W: number, L: number, skH: number, T: number, SLOPE: num
     topGeo.computeVertexNormals();
 
     const baseMat = mat.clone();
-    baseMat.side = THREE.DoubleSide;
+    baseMat.side = THREE.DoubleSide; // Safe rendering for CSG output
 
-    console.time('[CSG] fromMesh (roof)');
     let csgTop = CSG.fromMesh(new THREE.Mesh(topGeo, baseMat));
-    console.timeEnd('[CSG] fromMesh (roof)');
 
     for (const h of holes) {
         if (h.r > 0) {
+            // Cut hole. Make cylinder taller than roof height to ensure full cut
             const cylH = SLOPE + 10;
-            const cylGeo = new THREE.CylinderGeometry(h.r, h.r, cylH, 32);
+            const cylGeo = new THREE.CylinderGeometry(h.r, h.r, cylH, 32); 
             const cylMesh = new THREE.Mesh(cylGeo);
             cylMesh.position.set(h.wx, edgeY + SLOPE / 2, h.wz);
             cylMesh.updateMatrixWorld();
 
-            console.time(`[CSG] subtract hole ${h.id}`);
             const csgHole = CSG.fromMesh(cylMesh);
             csgTop = csgTop.subtract(csgHole);
-            console.timeEnd(`[CSG] subtract hole ${h.id}`);
         }
     }
 
-    console.time('[CSG] toMesh (final)');
     const finalTopMesh = CSG.toMesh(csgTop, new THREE.Matrix4(), baseMat);
-    console.timeEnd('[CSG] toMesh (final)');
     finalTopMesh.castShadow = true;
     finalTopMesh.receiveShadow = true;
     grp.add(finalTopMesh);
 }
+

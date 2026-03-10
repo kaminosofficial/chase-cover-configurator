@@ -1,10 +1,8 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv, type ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import cssInjectedByJs from 'vite-plugin-css-injected-by-js'
 import os from 'os'
-
-const isVercel = process.env.VERCEL === '1'
-const buildTarget = process.env.BUILD_TARGET // 'shopify' | undefined
+import { fetchPricingFromPublicSheet } from './lib/pricing-sheet'
 
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
@@ -19,7 +17,7 @@ function getLocalIP() {
   return undefined;
 }
 
-function getBuildConfig() {
+function getBuildConfig(isVercel: boolean, buildTarget?: string) {
   if (buildTarget === 'shopify') {
     return {
       lib: {
@@ -56,35 +54,58 @@ function getBuildConfig() {
   };
 }
 
-const isBuild = process.env.NODE_ENV === 'production' || buildTarget !== undefined;
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const isVercel = env.VERCEL === '1'
+  const buildTarget = env.BUILD_TARGET || process.env.BUILD_TARGET
+  const isBuild = env.NODE_ENV === 'production' || buildTarget !== undefined
 
-export default defineConfig({
-  plugins: [
-    react(),
-    (!isVercel && buildTarget !== 'shopify') && cssInjectedByJs(),
-  ].filter(Boolean),
-  define: {
-    __LOCAL_IP__: JSON.stringify(getLocalIP()),
-    ...(isBuild && {
-      'process.env.NODE_ENV': JSON.stringify('production'),
-      'process.env': JSON.stringify({}),
-    }),
-  },
-  build: getBuildConfig(),
-  server: { 
-    port: 5173, 
-    host: true, 
-    open: true,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:5173', // This is just a dummy, we need a real backend or mock it
-        bypass: (req, _res) => {
-          if (req.url?.includes('/api/pricing')) {
-            // Locally, we should probably just return a static JSON or the real script logic
-            // For now, let's just avoid the 404/code-serving mess if possible.
-          }
-        }
-      }
-    }
-  },
+  return {
+    plugins: [
+      {
+        name: 'local-pricing-api',
+        configureServer(server: ViteDevServer) {
+          server.middlewares.use('/api/pricing', async (req: any, res: any, next: any) => {
+            if (req.method === 'OPTIONS') {
+              res.statusCode = 200
+              res.end()
+              return
+            }
+            if (req.method !== 'GET') {
+              next()
+              return
+            }
+
+            try {
+              const pricing = await fetchPricingFromPublicSheet(env.GOOGLE_SHEET_ID || '', 'pricing')
+              res.statusCode = 200
+              res.setHeader('Content-Type', 'application/json')
+              res.setHeader('Cache-Control', 'public, max-age=60')
+              res.end(JSON.stringify(pricing))
+            } catch (error) {
+              console.error('Local pricing fetch error:', error)
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: 'Failed to fetch pricing' }))
+            }
+          })
+        },
+      },
+      react(),
+      (!isVercel && buildTarget !== 'shopify') && cssInjectedByJs(),
+    ].filter(Boolean),
+    define: {
+      __LOCAL_IP__: JSON.stringify(getLocalIP()),
+      ...(isBuild && {
+        'process.env.NODE_ENV': JSON.stringify('production'),
+        'process.env': JSON.stringify({}),
+      }),
+    },
+    build: getBuildConfig(isVercel, buildTarget),
+    server: {
+      port: 5173,
+      host: true,
+      open: true,
+    },
+  }
 })

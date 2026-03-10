@@ -16,16 +16,11 @@ function CameraSync() {
 }
 
 function Loader() {
-  const { active, progress, item, loaded, total } = useProgress();
+  const { active, progress } = useProgress();
   const [show, setShow] = useState(true);
 
   useEffect(() => {
-    console.log(`[Loader] active=${active} progress=${progress.toFixed(1)}% loaded=${loaded}/${total} item=${item}`);
-  }, [active, progress, item, loaded, total]);
-
-  useEffect(() => {
     if (!active && progress >= 100) {
-      console.log('[Loader] All assets loaded, fading out');
       const t = setTimeout(() => setShow(false), 600);
       return () => clearTimeout(t);
     }
@@ -68,11 +63,6 @@ function Loader() {
 
 export function ChaseViewer() {
   const orbitEnabled = useConfigStore(state => state.orbitEnabled);
-
-  useEffect(() => {
-    console.time('[ChaseViewer] Mount to render');
-    return () => console.timeEnd('[ChaseViewer] Mount to render');
-  }, []);
 
   return (
     <>

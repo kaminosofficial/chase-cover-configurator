@@ -43,7 +43,7 @@ export interface ConfigState {
 }
 
 const defaultCollar: CollarState = {
-  dia: 6, height: 3, centered: true,
+  dia: 6, height: 2, centered: true,
   offset1: 0, offset2: 0, offset3: 0, offset4: 0,
   stormCollar: false,
 };

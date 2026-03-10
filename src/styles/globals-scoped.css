@@ -225,15 +225,31 @@
     letter-spacing: normal !important;
     text-transform: none !important;
 }
-
-.chase-configurator-root .dim-overlay .dim-icon {
-    font-size: 16px !important;
-    line-height: 1 !important;
-    display: block !important;
-}
-
 .chase-configurator-root .dim-overlay.dim-open {
-    padding: 8px 12px !important;
+    padding: 8px 28px 8px 12px !important;
+    cursor: default !important;
+}
+.chase-configurator-root .dim-overlay .dim-icon {
+    font-size: 18px !important;
+    cursor: pointer !important;
+    display: block !important;
+    line-height: 1 !important;
+}
+.chase-configurator-root .dim-overlay .dim-close {
+    position: absolute !important;
+    top: 2px !important;
+    right: 4px !important;
+    background: none !important;
+    border: none !important;
+    font-size: 14px !important;
+    color: #999 !important;
+    cursor: pointer !important;
+    padding: 4px 6px !important;
+    line-height: 1 !important;
+    z-index: 1 !important;
+}
+.chase-configurator-root .dim-overlay .dim-close:hover {
+    color: #333 !important;
 }
 
 .chase-configurator-root .dim-overlay span {
@@ -909,27 +925,27 @@
 
 .chase-configurator-root .qty-field {
     display: flex !important;
-    flex-direction: column !important;
-    gap: 2px !important;
-    min-width: 56px !important;
+    align-items: center !important;
+    gap: 6px !important;
 }
 
 .chase-configurator-root .qty-field label {
-    font-size: 10px !important;
+    font-size: 12px !important;
     font-weight: 600 !important;
     color: var(--text-muted) !important;
     text-transform: uppercase !important;
     letter-spacing: 0.5px !important;
     font-family: var(--sans) !important;
     line-height: normal !important;
+    white-space: nowrap !important;
 }
 
 .chase-configurator-root .qty-field input[type="number"] {
-    width: 56px !important;
+    width: 52px !important;
     background: var(--bg) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius) !important;
-    padding: 8px 6px !important;
+    padding: 10px 6px !important;
     color: var(--text) !important;
     font-family: var(--sans) !important;
     font-size: 14px !important;
@@ -1485,22 +1501,21 @@
         margin-bottom: 16px !important;
     }
 
+    .chase-configurator-root .offset-grid .field {
+        min-width: 0 !important;
+    }
+
+    .chase-configurator-root .offset-grid .field label {
+        display: flex !important;
+        align-items: flex-start !important;
+        min-height: 2.8em !important;
+        line-height: 1.25 !important;
+    }
+
     .chase-configurator-root .viewport-controls {
         top: 10px !important;
         left: 10px !important;
         gap: 4px !important;
-        flex-wrap: wrap !important;
-        width: 92px !important;
-    }
-
-    .chase-configurator-root .vp-move-holes {
-        order: 10 !important;
-        width: 92px !important;
-        padding: 0 !important;
-        font-size: 10px !important;
-        justify-content: center !important;
-        white-space: nowrap !important;
-        gap: 3px !important;
     }
 
     .chase-configurator-root .vp-btn {

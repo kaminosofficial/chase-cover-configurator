@@ -18,7 +18,7 @@ export function HoleSelector() {
     if (n === 2) maxD = Math.min(10, W - 1, L / 2 - 1);
     if (n === 3) maxD = Math.min(10, W - 1, L / 3 - 1);
     const d = Math.max(3, Math.floor(maxD));
-    const r = { dia: d, height: 3, centered: true, offset1: 0, offset2: 0, offset3: 0, offset4: 0, stormCollar: false };
+    const r = { dia: d, height: 2, centered: true, offset1: 0, offset2: 0, offset3: 0, offset4: 0, stormCollar: false };
     config.set({ holes: n, collarA: { ...r }, collarB: { ...r }, collarC: { ...r } });
   }
 

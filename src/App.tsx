@@ -35,13 +35,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const arViewerRef = useRef<any>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
   const qrUrlRef = useRef<HTMLDivElement>(null);
-  const [mountTime] = useState(() => performance.now());
-
-  useEffect(() => {
-    const end = performance.now();
-    console.log(`[ChaseConfigurator] Total App Mount Time: ${(end - mountTime).toFixed(2)}ms`);
-  }, []);
-
   // Hash restore on mount
   useEffect(() => {
     const hash = window.location.hash;
@@ -206,8 +199,8 @@ export default function App({ productId, variantId }: AppProps = {}) {
             <button className="vp-btn" title="Top" onClick={() => cameraActions.top()}>⊤</button>
             <button className="vp-btn" title="Front" onClick={() => cameraActions.front()}>◻</button>
             {config.holes > 0 && (
-              <button
-                className="vp-btn vp-move-holes"
+              <button 
+                className="vp-btn" 
                 title={config.moveHolesMode ? 'Done Moving Holes' : 'Move Holes'}
                 style={{ 
                   width: 'auto', padding: '0 12px', gap: '6px', fontWeight: 600, fontSize: '12px',
@@ -237,13 +230,20 @@ export default function App({ productId, variantId }: AppProps = {}) {
           </div>
 
           {/* Dimension overlay top-right — collapsible */}
-          <div className={`dim-overlay${dimOpen ? ' dim-open' : ''}`} onClick={() => setDimOpen(o => !o)}>
+          <div className={`dim-overlay${dimOpen ? ' dim-open' : ''}`}>
             {dimOpen ? (
-              dimLines.map((line, i) => (
-                <div key={i}>{line}</div>
-              ))
+              <>
+                <button
+                  className="dim-close"
+                  onClick={(e) => { e.stopPropagation(); setDimOpen(false); }}
+                  title="Close dimensions"
+                >✕</button>
+                {dimLines.map((line, i) => (
+                  <div key={i}>{line}</div>
+                ))}
+              </>
             ) : (
-              <span className="dim-icon" title="Show dimensions">📐</span>
+              <span className="dim-icon" title="Show dimensions" onClick={() => setDimOpen(true)}>📐</span>
             )}
           </div>
 
