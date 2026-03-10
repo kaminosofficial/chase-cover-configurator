@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fetchPricingFromPublicSheet } from '../lib/pricing-sheet';
+import { fetchPricingFromPublicSheet } from '../lib/pricing-sheet.js';
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 const SHEET_NAME = 'pricing';

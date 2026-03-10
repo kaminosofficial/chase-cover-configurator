@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fetchPricingFromPublicSheet } from '../lib/pricing-sheet';
+import { fetchPricingFromPublicSheet } from '../lib/pricing-sheet.js';
 
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE!;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN; // shpat_...
