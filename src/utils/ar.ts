@@ -24,7 +24,10 @@ export function exportToGLB(grp: THREE.Group): Promise<string> {
         const m = (mesh.material as THREE.MeshStandardMaterial).clone();
         m.envMap = null;
         m.envMapIntensity = 0;
+        m.side = THREE.DoubleSide;
         (m as any).normalMap = null;
+        m.transparent = false;
+        m.depthWrite = true;
         m.needsUpdate = true;
         mesh.material = m;
       }
