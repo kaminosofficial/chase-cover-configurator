@@ -71,8 +71,8 @@ export async function fetchPricingFromPublicSheet(sheetId: string, sheetName = '
     }
 
     const url =
-        `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
-    const res = await fetch(url);
+        `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}&ts=${Date.now()}`;
+    const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) {
         throw new Error(`Google Sheet fetch error: ${res.status}`);
     }
