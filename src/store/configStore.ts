@@ -1,9 +1,13 @@
 import { create } from 'zustand';
-import { PRICING } from '../config';
-import { onPricingLoaded } from '../config/pricing';
+import { PRICING, getStormCollarPrice, onPricingLoaded } from '../config/pricing';
+
+export type HoleShape = 'round' | 'rect';
 
 export interface CollarState {
+  shape: HoleShape;
   dia: number;
+  rectWidth: number;
+  rectLength: number;
   height: number;
   centered: boolean;
   offset1: number;
@@ -43,7 +47,9 @@ export interface ConfigState {
 }
 
 const defaultCollar: CollarState = {
+  shape: 'round',
   dia: 6, height: 2, centered: true,
+  rectWidth: 6, rectLength: 6,
   offset1: 0, offset2: 0, offset3: 0, offset4: 0,
   stormCollar: false,
 };
@@ -55,7 +61,20 @@ function computePrice(s: Partial<StoreData>): number {
   const holes = s.holes ?? 0, pc = s.pc ?? false;
   const gauge = s.gauge ?? 24, mat = s.mat ?? 'galvanized';
   const base = PRICING.AREA_RATE * w * l + PRICING.LINEAR_RATE * (w + l) + PRICING.BASE_FIXED;
-  const subtotal = base + holes * PRICING.HOLE_PRICE + (sk >= PRICING.SKIRT_THRESHOLD ? PRICING.SKIRT_SURCHARGE : 0) + (pc ? PRICING.POWDER_COAT : 0);
+
+  // Storm collar cost: one collar per hole where stormCollar is enabled
+  let stormCollarCost = 0;
+  const collars = [s.collarA, s.collarB, s.collarC];
+  for (let i = 0; i < holes; i++) {
+    const c = collars[i];
+    if (c?.stormCollar && c.shape !== 'rect') stormCollarCost += getStormCollarPrice(c.dia);
+  }
+
+  const subtotal = base
+    + holes * PRICING.HOLE_PRICE
+    + (sk >= PRICING.SKIRT_THRESHOLD ? PRICING.SKIRT_SURCHARGE : 0)
+    + (pc ? PRICING.POWDER_COAT : 0)
+    + stormCollarCost;
   return subtotal * (PRICING.GAUGE_MULT[gauge] || 1) * (PRICING.MATERIAL_MULT[mat] || 1);
 }
 

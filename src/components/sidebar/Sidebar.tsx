@@ -10,7 +10,7 @@ import { PriceDisplay } from './PriceDisplay';
 import { CartRow } from './CartRow';
 import { NotesField } from './NotesField';
 import { useConfigStore } from '../../store/configStore';
-import { PRICING } from '../../config';
+import { PRICING, getStormCollarPrice } from '../../config/pricing';
 import { InfoTooltip } from './InfoTooltip';
 
 interface SidebarProps {
@@ -36,7 +36,20 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
   const holeAmt = holes * PRICING.HOLE_PRICE;
   const skirtAmt = config.sk >= PRICING.SKIRT_THRESHOLD ? PRICING.SKIRT_SURCHARGE : 0;
   const pcAmt = pc ? PRICING.POWDER_COAT : 0;
-  const subtotal = base + holeAmt + skirtAmt + pcAmt;
+
+  // Per-hole storm collar costs (only for holes with storm collar enabled)
+  const holeLabels = holes === 1
+    ? ['Hole 1']
+    : holes === 2
+      ? ['Hole 1', 'Hole 2']
+      : ['Hole 1', 'Hole 2', 'Hole 3'];
+  const activeCollars = [config.collarA, config.collarB, config.collarC].slice(0, holes);
+  const scItems = activeCollars
+    .map((c, i) => ({ label: holeLabels[i], price: c.stormCollar && c.shape !== 'rect' ? getStormCollarPrice(c.dia) : 0 }))
+    .filter(item => item.price > 0);
+  const scTotal = scItems.reduce((sum, item) => sum + item.price, 0);
+
+  const subtotal = base + holeAmt + scTotal + skirtAmt + pcAmt;
   const gaugeMult = PRICING.GAUGE_MULT[config.gauge] || 1;
   const matMult = PRICING.MATERIAL_MULT[config.mat] || 1;
   const total = subtotal * gaugeMult * matMult;
@@ -44,6 +57,11 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
   const bdRows: { label: string; value: string; cls: string }[] = [
     { label: `Base Price (${config.w}" × ${config.l}")`, value: fmt(base), cls: 'bd-row' },
     { label: `${holes} Flue Hole${holes !== 1 ? 's' : ''}`, value: fmt(holeAmt), cls: 'bd-row' },
+    ...scItems.map(item => ({
+      label: `Storm Collar – ${item.label}`,
+      value: fmt(item.price),
+      cls: 'bd-row',
+    })),
     ...(skirtAmt ? [{ label: 'Oversized Skirt Surcharge', value: fmt(skirtAmt), cls: 'bd-row' }] : []),
     ...(pcAmt ? [{ label: 'Powder Coating', value: fmt(pcAmt), cls: 'bd-row' }] : []),
     { label: 'Subtotal', value: fmt(subtotal), cls: 'bd-sub' },

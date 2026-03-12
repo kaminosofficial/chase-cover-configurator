@@ -1,6 +1,6 @@
 import { Html, Line } from '@react-three/drei';
 import { useConfigStore } from '../../store/configStore';
-import { getDiagonalSlopeRise, holeWorld, SC } from '../../utils/geometry';
+import { getDiagonalSlopeRise, getHoleEdgeOffsets, holeWorld, SC } from '../../utils/geometry';
 import { formatFrac } from '../../utils/format';
 
 const HOLE_COLOR: Record<string, string> = {
@@ -60,16 +60,17 @@ export function DimensionOverlay() {
             ))}
 
             {holeIds.map((id, holeIndex) => {
-                const collar = id === 'A' ? config.collarA : id === 'B' ? config.collarB : config.collarC;
                 const showLabels = id === 'A' ? config.showLabelsA : id === 'B' ? config.showLabelsB : config.showLabelsC;
                 if (!showLabels) return null;
 
                 const hole = holeWorld(id, config);
+                const offsets = getHoleEdgeOffsets(hole, config);
                 const color = HOLE_COLOR[id];
                 const Y = baseY + holeIndex * HOLE_Y_OFFSET;
                 const hx = hole.wx;
                 const hz = hole.wz;
-                const r = hole.r;
+                const halfX = hole.halfX;
+                const halfZ = hole.halfZ;
 
                 // Mapping: X1=Top(-W/2), X2=Right(-L/2), X3=Bottom(+W/2), X4=Left(+L/2)
                 const dims = [
@@ -77,41 +78,37 @@ export function DimensionOverlay() {
                         key: `${id}1`,
                         label: `${id}1`,
                         from: [-W / 2, Y, hz] as [number, number, number],
-                        to: [hx - r, Y, hz] as [number, number, number],
-                        midX: (-W / 2 + hx - r) / 2,
+                        to: [hx - halfX, Y, hz] as [number, number, number],
+                        midX: (-W / 2 + hx - halfX) / 2,
                         midZ: hz,
-                        inches: Math.abs(hole.wx / SC - collar.dia / 2 + config.w / 2),
-                        dir: 'x' as const,
+                        inches: offsets.top,
                     },
                     {
                         key: `${id}2`,
                         label: `${id}2`,
                         from: [hx, Y, -L / 2] as [number, number, number],
-                        to: [hx, Y, hz - r] as [number, number, number],
+                        to: [hx, Y, hz - halfZ] as [number, number, number],
                         midX: hx,
-                        midZ: (-L / 2 + hz - r) / 2,
-                        inches: Math.abs(hole.wz / SC - collar.dia / 2 + config.l / 2),
-                        dir: 'z' as const,
+                        midZ: (-L / 2 + hz - halfZ) / 2,
+                        inches: offsets.right,
                     },
                     {
                         key: `${id}3`,
                         label: `${id}3`,
                         from: [W / 2, Y, hz] as [number, number, number],
-                        to: [hx + r, Y, hz] as [number, number, number],
-                        midX: (W / 2 + hx + r) / 2,
+                        to: [hx + halfX, Y, hz] as [number, number, number],
+                        midX: (W / 2 + hx + halfX) / 2,
                         midZ: hz,
-                        inches: Math.abs(config.w / 2 - (hole.wx / SC + collar.dia / 2)),
-                        dir: 'x' as const,
+                        inches: offsets.bottom,
                     },
                     {
                         key: `${id}4`,
                         label: `${id}4`,
                         from: [hx, Y, L / 2] as [number, number, number],
-                        to: [hx, Y, hz + r] as [number, number, number],
+                        to: [hx, Y, hz + halfZ] as [number, number, number],
                         midX: hx,
-                        midZ: (L / 2 + hz + r) / 2,
-                        inches: Math.abs(config.l / 2 - (hole.wz / SC + collar.dia / 2)),
-                        dir: 'z' as const,
+                        midZ: (L / 2 + hz + halfZ) / 2,
+                        inches: offsets.left,
                     },
                 ];
 

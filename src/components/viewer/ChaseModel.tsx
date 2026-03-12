@@ -3,7 +3,37 @@ import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { useConfigStore } from '../../store/configStore';
-import { buildCoverWithoutCollars, buildCollarForHole, holeWorld, clampDragToOffsets, getDiagonalSlopeRise, mkMat, SC } from '../../utils/geometry';
+import { buildCoverWithoutCollars, buildCollarForHole, holeWorld, clampDragToOffsets, getDiagonalSlopeRise, holesOverlap, mkMat, SC } from '../../utils/geometry';
+
+function RectDragRing({ width, length, color }: { width: number; length: number; color: string }) {
+    const outerHalfX = width / 2 + 0.06;
+    const outerHalfZ = length / 2 + 0.06;
+    const innerHalfX = width / 2 + 0.01;
+    const innerHalfZ = length / 2 + 0.01;
+
+    const shape = new THREE.Shape();
+    shape.moveTo(-outerHalfX, -outerHalfZ);
+    shape.lineTo(outerHalfX, -outerHalfZ);
+    shape.lineTo(outerHalfX, outerHalfZ);
+    shape.lineTo(-outerHalfX, outerHalfZ);
+    shape.closePath();
+
+    const hole = new THREE.Path();
+    hole.moveTo(-innerHalfX, -innerHalfZ);
+    hole.lineTo(-innerHalfX, innerHalfZ);
+    hole.lineTo(innerHalfX, innerHalfZ);
+    hole.lineTo(innerHalfX, -innerHalfZ);
+    hole.closePath();
+    shape.holes.push(hole);
+
+    const geometry = new THREE.ShapeGeometry(shape);
+
+    return (
+        <mesh geometry={geometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+            <meshBasicMaterial color={color} transparent opacity={0.6} side={THREE.DoubleSide} depthTest={false} />
+        </mesh>
+    );
+}
 
 function HoleComponent({ id, config, activeId, setActiveId, mat }: { id: 'A'|'B'|'C', config: any, activeId: string | null, setActiveId: (id: string | null) => void, mat: THREE.Material }) {
     const setCollar = useConfigStore(state => state.setCollar);
@@ -28,7 +58,7 @@ function HoleComponent({ id, config, activeId, setActiveId, mat }: { id: 'A'|'B'
         grp.traverse(c => { const mesh = c as THREE.Mesh; if (mesh.geometry) mesh.geometry.dispose(); });
         while(grp.children.length) grp.remove(grp.children[0]);
         buildCollarForHole(grp, hole, config, mat);
-    }, [config[`collar${id}`].dia, config[`collar${id}`].height, config[`collar${id}`].stormCollar, config.diag, config.sk, config.w, config.l, mat, hole.wx, hole.wz]);
+    }, [config[`collar${id}`].dia, config[`collar${id}`].height, config[`collar${id}`].rectLength, config[`collar${id}`].rectWidth, config[`collar${id}`].shape, config[`collar${id}`].stormCollar, config.diag, config.sk, config.w, config.l, mat, hole.wx, hole.wz]);
 
     useEffect(() => {
         if (!dragging) return;
@@ -78,11 +108,7 @@ function HoleComponent({ id, config, activeId, setActiveId, mat }: { id: 'A'|'B'
                 let hasCollision = false;
                 for (const oId of otherIds) {
                     const other = holeWorld(oId, st);
-                    const dx = currentHole.wx - other.wx;
-                    const dz = currentHole.wz - other.wz;
-                    const dist = Math.sqrt(dx * dx + dz * dz);
-                    const minDist = currentHole.r + other.r + 1.0 * SC; // 1 inch gap
-                    if (dist < minDist - 0.01) { // small epsilon
+                    if (holesOverlap(currentHole, other, 1.0 * SC)) {
                          hasCollision = true;
                          break;
                     }
@@ -167,14 +193,22 @@ function HoleComponent({ id, config, activeId, setActiveId, mat }: { id: 'A'|'B'
                         onPointerOver={() => { document.body.style.cursor = dragging ? 'grabbing' : 'grab'; }}
                         onPointerOut={() => { if(!dragging) document.body.style.cursor = 'auto'; }}
                     >
-                        <cylinderGeometry args={[hole.r + 0.05, hole.r + 0.05, 0.4, 24]} />
+                        {hole.shape === 'round' ? (
+                            <cylinderGeometry args={[hole.radius + 0.05, hole.radius + 0.05, 0.4, 24]} />
+                        ) : (
+                            <boxGeometry args={[hole.sizeX + 0.08, 0.4, hole.sizeZ + 0.08]} />
+                        )}
                         <meshBasicMaterial visible={false} />
                     </mesh>
 
-                    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
-                        <ringGeometry args={[hole.r + 0.01, hole.r + 0.06, 32]} />
-                        <meshBasicMaterial color={dragging ? "#b89a69" : "#c9873b"} transparent opacity={0.6} side={THREE.DoubleSide} depthTest={false} />
-                    </mesh>
+                    {hole.shape === 'round' ? (
+                        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+                            <ringGeometry args={[hole.radius + 0.01, hole.radius + 0.06, 32]} />
+                            <meshBasicMaterial color={dragging ? "#b89a69" : "#c9873b"} transparent opacity={0.6} side={THREE.DoubleSide} depthTest={false} />
+                        </mesh>
+                    ) : (
+                        <RectDragRing width={hole.sizeX} length={hole.sizeZ} color={dragging ? "#b89a69" : "#c9873b"} />
+                    )}
                     
                     <Html position={[0, 0.1, 0]} center style={{ pointerEvents: 'none', zIndex: 10 }}>
                         <div style={{

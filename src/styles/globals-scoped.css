@@ -174,6 +174,8 @@
     display: flex !important;
     gap: 5px !important;
     z-index: 5 !important;
+    flex-wrap: wrap !important;
+    max-width: min(320px, calc(100% - 28px)) !important;
 }
 
 .chase-configurator-root .vp-btn {
@@ -516,6 +518,38 @@
     line-height: normal !important;
 }
 
+.chase-configurator-root .shape-toggle {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+}
+
+.chase-configurator-root .shape-btn {
+    border: 1px solid var(--border) !important;
+    background: var(--bg) !important;
+    color: var(--text-muted) !important;
+    border-radius: var(--radius) !important;
+    padding: 10px 12px !important;
+    font-family: var(--sans) !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s !important;
+    line-height: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
+
+.chase-configurator-root .shape-btn:hover {
+    border-color: #bbb !important;
+}
+
+.chase-configurator-root .shape-btn.active {
+    background: linear-gradient(180deg, rgba(209, 179, 130, 0.18), rgba(209, 179, 130, 0.08)) !important;
+    border-color: var(--primary-hover) !important;
+    color: var(--text) !important;
+}
+
 .chase-configurator-root .centered-check {
     display: flex !important;
     align-items: center !important;
@@ -534,6 +568,14 @@
     width: 16px !important;
     height: 16px !important;
     display: inline-block !important;
+}
+
+.chase-configurator-root .centered-check-disabled {
+    opacity: 0.65 !important;
+}
+
+.chase-configurator-root .centered-check-disabled input[type="checkbox"] {
+    cursor: not-allowed !important;
 }
 
 /* ===== Material chips ===== */
@@ -1124,6 +1166,11 @@
 
 .chase-configurator-root .ar-btn:hover {
     background: var(--accent-hover) !important;
+}
+
+.chase-configurator-root .viewport-action-btn {
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
 }
 
 .chase-configurator-root .ar-overlay {

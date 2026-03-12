@@ -1,14 +1,17 @@
-﻿import { useState, useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useConfigStore } from '../../store/configStore';
-import type { CollarState, ConfigState } from '../../store/configStore';
-import { holeWorld, SC, clampDragToOffsets, MIN_GAP_INCHES } from '../../utils/geometry';
+import type { CollarState, ConfigState, HoleShape } from '../../store/configStore';
+import { clampDragToOffsets, getHoleSizeInches, holeWorld, holesOverlap, MIN_GAP_INCHES, SC } from '../../utils/geometry';
 import { InfoTooltip } from './InfoTooltip';
 
-interface Props { id: 'A' | 'B' | 'C'; label: string; }
+interface Props {
+  id: 'A' | 'B' | 'C';
+  label: string;
+}
 
 type HoleId = 'A' | 'B' | 'C';
 
-const MIN_DIA = 3;
+const MIN_SIZE = 3;
 const STEP = 0.125;
 const COLLAR_KEYS: Record<HoleId, 'collarA' | 'collarB' | 'collarC'> = {
   A: 'collarA',
@@ -16,7 +19,21 @@ const COLLAR_KEYS: Record<HoleId, 'collarA' | 'collarB' | 'collarC'> = {
   C: 'collarC',
 };
 
-function CollarInput({ label, value, min, max, onCommit, tooltip }: { label: ReactNode; value: number; min: number; max: number; onCommit: (v: number) => void; tooltip?: string }) {
+function CollarInput({
+  label,
+  value,
+  min,
+  max,
+  onCommit,
+  tooltip,
+}: {
+  label: ReactNode;
+  value: number;
+  min: number;
+  max: number;
+  onCommit: (v: number) => void;
+  tooltip?: string;
+}) {
   const [inputVal, setInputVal] = useState(value.toString());
   const [focused, setFocused] = useState(false);
 
@@ -86,28 +103,14 @@ function buildConfigWithCollar(config: ConfigState, id: HoleId, partial: Partial
   } as ConfigState;
 }
 
-function computeLogicalMaxDiameter(config: ConfigState, id: HoleId): number {
+function holeFitsCover(config: ConfigState, id: HoleId): boolean {
   const hole = holeWorld(id, config);
   const centerX = Math.abs(hole.wx / SC);
   const centerZ = Math.abs(hole.wz / SC);
-
-  let maxRadius = Math.min(
-    config.w / 2 - centerX,
-    config.l / 2 - centerZ,
+  return (
+    centerX + hole.halfX / SC <= config.w / 2 + 0.0001 &&
+    centerZ + hole.halfZ / SC <= config.l / 2 + 0.0001
   );
-
-  for (const otherId of activeHoleIds(config)) {
-    if (otherId === id) continue;
-
-    const other = holeWorld(otherId, config);
-    const dx = hole.wx - other.wx;
-    const dz = hole.wz - other.wz;
-    const distInches = Math.sqrt(dx * dx + dz * dz) / SC;
-    const allowedRadius = distInches - other.r / SC - MIN_GAP_INCHES;
-    maxRadius = Math.min(maxRadius, allowedRadius);
-  }
-
-  return Math.max(0, snapDownToEighth(maxRadius * 2));
 }
 
 function layoutsOverlap(config: ConfigState): boolean {
@@ -115,11 +118,7 @@ function layoutsOverlap(config: ConfigState): boolean {
 
   for (let i = 0; i < holes.length; i++) {
     for (let j = i + 1; j < holes.length; j++) {
-      const dx = holes[i].wx - holes[j].wx;
-      const dz = holes[i].wz - holes[j].wz;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      const minDist = holes[i].r + holes[j].r + MIN_GAP_INCHES * SC;
-      if (dist < minDist - 0.0005) {
+      if (holesOverlap(holes[i], holes[j], MIN_GAP_INCHES * SC)) {
         return true;
       }
     }
@@ -128,14 +127,16 @@ function layoutsOverlap(config: ConfigState): boolean {
   return false;
 }
 
+function layoutValid(config: ConfigState): boolean {
+  return activeHoleIds(config).every(id => holeFitsCover(config, id)) && !layoutsOverlap(config);
+}
+
 function resolveManualOffsets(config: ConfigState, id: HoleId, partial: Partial<CollarState>) {
   const trialConfig = buildConfigWithCollar(config, id, { centered: false, ...partial });
   const trialHole = holeWorld(id, trialConfig);
   const safe = clampDragToOffsets(id, trialHole.wx, trialHole.wz, trialConfig);
 
-  if (safe.colliding) {
-    return null;
-  }
+  if (safe.colliding) return null;
 
   const safeConfig = buildConfigWithCollar(trialConfig, id, {
     centered: false,
@@ -145,41 +146,42 @@ function resolveManualOffsets(config: ConfigState, id: HoleId, partial: Partial<
     offset4: safe.offset4,
   });
 
-  if (layoutsOverlap(safeConfig)) {
-    return null;
-  }
-
+  if (!layoutValid(safeConfig)) return null;
   return safe;
 }
 
-function resolveManualDiameter(config: ConfigState, id: HoleId, requestedDia: number) {
+function resolveRoundDiameter(config: ConfigState, id: HoleId, requestedDia: number) {
+  const collar = getCollarState(config, id);
   const currentHole = holeWorld(id, config);
-  const logicalMaxDia = computeLogicalMaxDiameter(config, id);
-  const upperBound = snapDownToEighth(Math.max(MIN_DIA, Math.min(requestedDia, logicalMaxDia)));
-  const stepCount = Math.max(0, Math.floor((upperBound - MIN_DIA) / STEP + 0.0001));
+  const upperBound = snapDownToEighth(Math.max(MIN_SIZE, Math.min(requestedDia, config.w, config.l)));
+  const stepCount = Math.max(0, Math.floor((upperBound - MIN_SIZE) / STEP + 0.0001));
 
   for (let stepIndex = 0; stepIndex <= stepCount; stepIndex++) {
     const candidateDia = snapDownToEighth(upperBound - stepIndex * STEP);
     const trialConfig = buildConfigWithCollar(config, id, {
-      centered: false,
+      shape: 'round',
       dia: candidateDia,
     });
-    const safe = clampDragToOffsets(id, currentHole.wx, currentHole.wz, trialConfig);
 
-    if (safe.colliding) {
+    if (collar.centered) {
+      if (layoutValid(trialConfig)) {
+        return { dia: candidateDia };
+      }
       continue;
     }
 
+    const safe = clampDragToOffsets(id, currentHole.wx, currentHole.wz, trialConfig);
+    if (safe.colliding) continue;
+
     const safeConfig = buildConfigWithCollar(trialConfig, id, {
       centered: false,
-      dia: candidateDia,
       offset1: safe.offset1,
       offset2: safe.offset2,
       offset3: safe.offset3,
       offset4: safe.offset4,
     });
 
-    if (!layoutsOverlap(safeConfig)) {
+    if (layoutValid(safeConfig)) {
       return {
         dia: candidateDia,
         ...safe,
@@ -190,48 +192,154 @@ function resolveManualDiameter(config: ConfigState, id: HoleId, requestedDia: nu
   return null;
 }
 
+function resolveRectAxis(config: ConfigState, id: HoleId, axis: 'rectWidth' | 'rectLength', requestedValue: number) {
+  const collar = getCollarState(config, id);
+  const currentHole = holeWorld(id, config);
+  const upperLimit = axis === 'rectWidth' ? config.w : config.l;
+  const upperBound = snapDownToEighth(Math.max(MIN_SIZE, Math.min(requestedValue, upperLimit)));
+  const stepCount = Math.max(0, Math.floor((upperBound - MIN_SIZE) / STEP + 0.0001));
+
+  for (let stepIndex = 0; stepIndex <= stepCount; stepIndex++) {
+    const candidateValue = snapDownToEighth(upperBound - stepIndex * STEP);
+    const trialConfig = buildConfigWithCollar(config, id, {
+      shape: 'rect',
+      stormCollar: false,
+      [axis]: candidateValue,
+    } as Partial<CollarState>);
+
+    if (collar.centered) {
+      if (layoutValid(trialConfig)) {
+        return { [axis]: candidateValue } as Partial<CollarState>;
+      }
+      continue;
+    }
+
+    const safe = clampDragToOffsets(id, currentHole.wx, currentHole.wz, trialConfig);
+    if (safe.colliding) continue;
+
+    const safeConfig = buildConfigWithCollar(trialConfig, id, {
+      centered: false,
+      offset1: safe.offset1,
+      offset2: safe.offset2,
+      offset3: safe.offset3,
+      offset4: safe.offset4,
+    });
+
+    if (layoutValid(safeConfig)) {
+      return {
+        [axis]: candidateValue,
+        ...safe,
+      } as Partial<CollarState>;
+    }
+  }
+
+  return null;
+}
+
+function ShapeToggle({ value, onChange }: { value: HoleShape; onChange: (shape: HoleShape) => void }) {
+  return (
+    <div className="shape-toggle">
+      <button
+        type="button"
+        className={`shape-btn${value === 'round' ? ' active' : ''}`}
+        onClick={() => onChange('round')}
+      >
+        Round
+      </button>
+      <button
+        type="button"
+        className={`shape-btn${value === 'rect' ? ' active' : ''}`}
+        onClick={() => onChange('rect')}
+      >
+        Rectangle
+      </button>
+    </div>
+  );
+}
+
 export function CollarGroup({ id, label }: Props) {
   const config = useConfigStore(s => s);
   const setCollar = useConfigStore(s => s.setCollar);
   const collar = getCollarState(config, id);
+  const size = getHoleSizeInches(collar);
 
-  const maxW = Math.max(0, config.w - collar.dia);
-  const maxL = Math.max(0, config.l - collar.dia);
-  const maxDia = Math.max(MIN_DIA, computeLogicalMaxDiameter(config, id));
-  const diaInputMax = maxDia;
-
-  useEffect(() => {
-    if (collar.centered && collar.dia > maxDia) {
-      setCollar(id, { dia: Math.max(MIN_DIA, snapDownToEighth(maxDia)) });
-    }
-  }, [collar.centered, collar.dia, id, maxDia, setCollar]);
+  const maxW = Math.max(0, config.w - size.sizeX);
+  const maxL = Math.max(0, config.l - size.sizeZ);
+  const maxDiaInput = Math.max(MIN_SIZE, snapDownToEighth(Math.min(config.w, config.l)));
+  const maxRectWidthInput = Math.max(MIN_SIZE, snapDownToEighth(config.w));
+  const maxRectLengthInput = Math.max(MIN_SIZE, snapDownToEighth(config.l));
 
   useEffect(() => {
-    if (collar.centered) {
-      return;
+    let partial: Partial<CollarState> | null = null;
+
+    if (collar.shape === 'rect' && collar.stormCollar) {
+      partial = { ...(partial ?? {}), stormCollar: false };
     }
 
-    const resolved = resolveManualDiameter(config, id, collar.dia);
-    if (!resolved) {
-      return;
+    if (collar.shape === 'round') {
+      const resolved = resolveRoundDiameter(config, id, collar.dia);
+      if (resolved) {
+        const needsUpdate =
+          Math.abs(collar.dia - resolved.dia) > 0.0001 ||
+          ('offset1' in resolved && Math.abs(collar.offset1 - (resolved.offset1 ?? collar.offset1)) > 0.0001) ||
+          ('offset2' in resolved && Math.abs(collar.offset2 - (resolved.offset2 ?? collar.offset2)) > 0.0001) ||
+          ('offset3' in resolved && Math.abs(collar.offset3 - (resolved.offset3 ?? collar.offset3)) > 0.0001) ||
+          ('offset4' in resolved && Math.abs(collar.offset4 - (resolved.offset4 ?? collar.offset4)) > 0.0001);
+
+        if (needsUpdate) {
+          partial = {
+            ...(partial ?? {}),
+            ...resolved,
+            centered: collar.centered,
+          };
+        }
+      }
+    } else {
+      let workingConfig = partial ? buildConfigWithCollar(config, id, partial) : config;
+      const widthResolved = resolveRectAxis(workingConfig, id, 'rectWidth', getCollarState(workingConfig, id).rectWidth);
+      if (widthResolved) {
+        const workingCollar = getCollarState(workingConfig, id);
+        const needsWidthUpdate =
+          Math.abs(workingCollar.rectWidth - (widthResolved.rectWidth ?? workingCollar.rectWidth)) > 0.0001 ||
+          ('offset1' in widthResolved && Math.abs(workingCollar.offset1 - (widthResolved.offset1 ?? workingCollar.offset1)) > 0.0001) ||
+          ('offset2' in widthResolved && Math.abs(workingCollar.offset2 - (widthResolved.offset2 ?? workingCollar.offset2)) > 0.0001) ||
+          ('offset3' in widthResolved && Math.abs(workingCollar.offset3 - (widthResolved.offset3 ?? workingCollar.offset3)) > 0.0001) ||
+          ('offset4' in widthResolved && Math.abs(workingCollar.offset4 - (widthResolved.offset4 ?? workingCollar.offset4)) > 0.0001);
+
+        if (needsWidthUpdate) {
+          partial = {
+            ...(partial ?? {}),
+            ...widthResolved,
+            stormCollar: false,
+            centered: collar.centered,
+          };
+          workingConfig = buildConfigWithCollar(workingConfig, id, partial);
+        }
+      }
+
+      const lengthResolved = resolveRectAxis(workingConfig, id, 'rectLength', getCollarState(workingConfig, id).rectLength);
+      if (lengthResolved) {
+        const workingCollar = getCollarState(workingConfig, id);
+        const needsLengthUpdate =
+          Math.abs(workingCollar.rectLength - (lengthResolved.rectLength ?? workingCollar.rectLength)) > 0.0001 ||
+          ('offset1' in lengthResolved && Math.abs(workingCollar.offset1 - (lengthResolved.offset1 ?? workingCollar.offset1)) > 0.0001) ||
+          ('offset2' in lengthResolved && Math.abs(workingCollar.offset2 - (lengthResolved.offset2 ?? workingCollar.offset2)) > 0.0001) ||
+          ('offset3' in lengthResolved && Math.abs(workingCollar.offset3 - (lengthResolved.offset3 ?? workingCollar.offset3)) > 0.0001) ||
+          ('offset4' in lengthResolved && Math.abs(workingCollar.offset4 - (lengthResolved.offset4 ?? workingCollar.offset4)) > 0.0001);
+
+        if (needsLengthUpdate) {
+          partial = {
+            ...(partial ?? {}),
+            ...lengthResolved,
+            stormCollar: false,
+            centered: collar.centered,
+          };
+        }
+      }
     }
 
-    const needsUpdate =
-      Math.abs(collar.dia - resolved.dia) > 0.0001 ||
-      Math.abs(collar.offset1 - resolved.offset1) > 0.0001 ||
-      Math.abs(collar.offset2 - resolved.offset2) > 0.0001 ||
-      Math.abs(collar.offset3 - resolved.offset3) > 0.0001 ||
-      Math.abs(collar.offset4 - resolved.offset4) > 0.0001;
-
-    if (needsUpdate) {
-      setCollar(id, {
-        centered: false,
-        dia: resolved.dia,
-        offset1: resolved.offset1,
-        offset2: resolved.offset2,
-        offset3: resolved.offset3,
-        offset4: resolved.offset4,
-      });
+    if (partial) {
+      setCollar(id, partial);
     }
   }, [
     collar.centered,
@@ -240,12 +348,16 @@ export function CollarGroup({ id, label }: Props) {
     collar.offset2,
     collar.offset3,
     collar.offset4,
-    config.w,
-    config.l,
-    config.holes,
+    collar.rectLength,
+    collar.rectWidth,
+    collar.shape,
+    collar.stormCollar,
     config.collarA,
     config.collarB,
     config.collarC,
+    config.holes,
+    config.l,
+    config.w,
     id,
     setCollar,
   ]);
@@ -255,46 +367,88 @@ export function CollarGroup({ id, label }: Props) {
       const hole = holeWorld(id, config);
       const w = config.w;
       const l = config.l;
-      const dia = collar.dia;
+      const halfX = hole.halfX / SC;
+      const halfZ = hole.halfZ / SC;
       const r8 = (value: number) => Math.max(0, Math.ceil(value * 8) / 8);
       setCollar(id, {
         centered: false,
-        offset1: r8(w / 2 - dia / 2 - hole.wx / SC),
-        offset2: r8(l / 2 - dia / 2 - hole.wz / SC),
-        offset3: r8(hole.wx / SC + w / 2 - dia / 2),
-        offset4: r8(hole.wz / SC + l / 2 - dia / 2),
+        offset1: r8(w / 2 - halfX - hole.wx / SC),
+        offset2: r8(l / 2 - halfZ - hole.wz / SC),
+        offset3: r8(hole.wx / SC + w / 2 - halfX),
+        offset4: r8(hole.wz / SC + l / 2 - halfZ),
       });
     } else {
       setCollar(id, { centered: true });
     }
   }
 
-  function handleDiaChange(newDia: number) {
-    if (collar.centered) {
-      setCollar(id, { dia: Math.min(newDia, maxDia) });
+  function handleShapeChange(newShape: HoleShape) {
+    if (newShape === collar.shape) return;
+
+    if (newShape === 'rect') {
+      let workingConfig = buildConfigWithCollar(config, id, {
+        shape: 'rect',
+        stormCollar: false,
+        rectWidth: Math.max(MIN_SIZE, snapDownToEighth(collar.rectWidth || collar.dia)),
+        rectLength: Math.max(MIN_SIZE, snapDownToEighth(collar.rectLength || collar.dia)),
+      });
+
+      const widthResolved = resolveRectAxis(workingConfig, id, 'rectWidth', getCollarState(workingConfig, id).rectWidth);
+      if (!widthResolved) return;
+      workingConfig = buildConfigWithCollar(workingConfig, id, widthResolved);
+
+      const lengthResolved = resolveRectAxis(workingConfig, id, 'rectLength', getCollarState(workingConfig, id).rectLength);
+      if (!lengthResolved) return;
+
+      setCollar(id, {
+        shape: 'rect',
+        stormCollar: false,
+        ...widthResolved,
+        ...lengthResolved,
+      });
       return;
     }
 
-    const resolved = resolveManualDiameter(config, id, newDia);
-    if (!resolved) {
-      return;
-    }
+    const baseDia = snapDownToEighth(Math.max(MIN_SIZE, Math.min(collar.dia || Math.min(collar.rectWidth, collar.rectLength), config.w, config.l)));
+    const workingConfig = buildConfigWithCollar(config, id, {
+      shape: 'round',
+      dia: baseDia,
+    });
+    const resolved = resolveRoundDiameter(workingConfig, id, baseDia);
+    if (!resolved) return;
 
     setCollar(id, {
-      centered: false,
-      dia: resolved.dia,
-      offset1: resolved.offset1,
-      offset2: resolved.offset2,
-      offset3: resolved.offset3,
-      offset4: resolved.offset4,
+      shape: 'round',
+      ...resolved,
+    });
+  }
+
+  function handleDiaChange(newDia: number) {
+    const resolved = resolveRoundDiameter(config, id, newDia);
+    if (!resolved) return;
+
+    setCollar(id, {
+      shape: 'round',
+      ...resolved,
+      centered: collar.centered,
+    });
+  }
+
+  function handleRectAxisChange(axis: 'rectWidth' | 'rectLength', value: number) {
+    const resolved = resolveRectAxis(config, id, axis, value);
+    if (!resolved) return;
+
+    setCollar(id, {
+      shape: 'rect',
+      stormCollar: false,
+      ...resolved,
+      centered: collar.centered,
     });
   }
 
   function commitManualOffsets(partial: Partial<CollarState>) {
     const resolved = resolveManualOffsets(config, id, partial);
-    if (!resolved) {
-      return;
-    }
+    if (!resolved) return;
 
     setCollar(id, {
       centered: false,
@@ -309,7 +463,7 @@ export function CollarGroup({ id, label }: Props) {
     const next = Math.min(value, maxW);
     commitManualOffsets({
       offset3: next,
-      offset1: Math.max(0, config.w - collar.dia - next),
+      offset1: Math.max(0, config.w - size.sizeX - next),
     });
   }
 
@@ -317,7 +471,7 @@ export function CollarGroup({ id, label }: Props) {
     const next = Math.min(value, maxW);
     commitManualOffsets({
       offset1: next,
-      offset3: Math.max(0, config.w - collar.dia - next),
+      offset3: Math.max(0, config.w - size.sizeX - next),
     });
   }
 
@@ -325,7 +479,7 @@ export function CollarGroup({ id, label }: Props) {
     const next = Math.min(value, maxL);
     commitManualOffsets({
       offset4: next,
-      offset2: Math.max(0, config.l - collar.dia - next),
+      offset2: Math.max(0, config.l - size.sizeZ - next),
     });
   }
 
@@ -333,13 +487,22 @@ export function CollarGroup({ id, label }: Props) {
     const next = Math.min(value, maxL);
     commitManualOffsets({
       offset2: next,
-      offset4: Math.max(0, config.l - collar.dia - next),
+      offset4: Math.max(0, config.l - size.sizeZ - next),
     });
   }
 
   return (
     <div className="collar-group">
       <div className="collar-group-title">{label}</div>
+
+      <div className="field" style={{ marginBottom: 12 }}>
+        <label style={{ display: 'flex', alignItems: 'center' }}>
+          Hole Shape
+          <InfoTooltip text="Round holes use diameter. Rectangular holes switch the cutout and collar to length and width while keeping the same offset workflow." />
+        </label>
+        <ShapeToggle value={collar.shape} onChange={handleShapeChange} />
+      </div>
+
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <label className="centered-check" style={{ display: 'flex', alignItems: 'center' }}>
           <input
@@ -348,16 +511,20 @@ export function CollarGroup({ id, label }: Props) {
             onChange={e => handleCenteredChange(e.target.checked)}
           />
           Centered on Cover
-          <InfoTooltip text="When centered, the hole is automatically placed at the center of the cover. Uncheck to set custom offsets from each edge." />
+          <InfoTooltip text="When centered, the hole is automatically placed at the center slot for the selected cover layout. Uncheck to set custom offsets from each edge." />
         </label>
-        <label className="centered-check" style={{ display: 'flex', alignItems: 'center' }}>
+        <label className={`centered-check${collar.shape === 'rect' ? ' centered-check-disabled' : ''}`} style={{ display: 'flex', alignItems: 'center' }}>
           <input
             type="checkbox"
-            checked={collar.stormCollar || false}
+            checked={collar.shape === 'rect' ? false : collar.stormCollar || false}
+            disabled={collar.shape === 'rect'}
             onChange={e => setCollar(id, { stormCollar: e.target.checked })}
           />
           Add Storm Collar
-          <InfoTooltip text="Adds a conical metal flashing at the base of the collar that sheds water away from the pipe penetration. The storm collar top opening is 1 inch smaller than the flue hole diameter." />
+          <InfoTooltip text={collar.shape === 'rect'
+            ? 'Storm collars are available for round holes only.'
+            : 'Adds a conical metal flashing at the base of the collar that sheds water away from the pipe penetration. The storm collar top opening is 1 inch smaller than the flue hole diameter.'}
+          />
         </label>
         <label className="centered-check">
           <input
@@ -368,37 +535,92 @@ export function CollarGroup({ id, label }: Props) {
           Show Labels
         </label>
       </div>
-      <div className="field-row">
-        <CollarInput
-          label="Diameter (in)"
-          value={collar.dia}
-          min={MIN_DIA}
-          max={diaInputMax}
-          onCommit={handleDiaChange}
-          tooltip="Measure the outside diameter of the flue pipe or liner where it exits the chase top."
-        />
-        <CollarInput
-          label="Collar Height (in)"
-          value={collar.height}
-          min={1}
-          max={52}
-          onCommit={value => setCollar(id, { height: value })}
-          tooltip="Height of the vertical collar sleeve above the cover surface."
-        />
-      </div>
+
+      {collar.shape === 'round' ? (
+        <div className="field-row">
+          <CollarInput
+            label="Diameter (in)"
+            value={collar.dia}
+            min={MIN_SIZE}
+            max={maxDiaInput}
+            onCommit={handleDiaChange}
+            tooltip="Measure the outside diameter of the flue pipe or liner where it exits the chase top."
+          />
+          <CollarInput
+            label="Collar Height (in)"
+            value={collar.height}
+            min={1}
+            max={52}
+            onCommit={value => setCollar(id, { height: value })}
+            tooltip="Height of the vertical collar sleeve above the cover surface."
+          />
+        </div>
+      ) : (
+        <>
+          <div className="field-row">
+            <CollarInput
+              label="Length (in)"
+              value={collar.rectLength}
+              min={MIN_SIZE}
+              max={maxRectLengthInput}
+              onCommit={value => handleRectAxisChange('rectLength', value)}
+              tooltip="Rectangular opening size along the cover length."
+            />
+            <CollarInput
+              label="Width (in)"
+              value={collar.rectWidth}
+              min={MIN_SIZE}
+              max={maxRectWidthInput}
+              onCommit={value => handleRectAxisChange('rectWidth', value)}
+              tooltip="Rectangular opening size along the cover width."
+            />
+          </div>
+          <div className="field-row">
+            <CollarInput
+              label="Collar Height (in)"
+              value={collar.height}
+              min={1}
+              max={52}
+              onCommit={value => setCollar(id, { height: value })}
+              tooltip="Height of the rectangular collar sleeve above the cover surface."
+            />
+          </div>
+        </>
+      )}
+
       {!collar.centered && (
         <div className="offset-grid">
           <div className="field-row">
-            <CollarInput label={`${id}1 (Top edge -> hole)`} value={collar.offset3} min={0} max={maxW}
-              onCommit={commitTop} />
-            <CollarInput label={`${id}3 (Bottom edge -> hole)`} value={collar.offset1} min={0} max={maxW}
-              onCommit={commitBottom} />
+            <CollarInput
+              label={`${id}1 (Top edge -> hole)`}
+              value={collar.offset3}
+              min={0}
+              max={maxW}
+              onCommit={commitTop}
+            />
+            <CollarInput
+              label={`${id}3 (Bottom edge -> hole)`}
+              value={collar.offset1}
+              min={0}
+              max={maxW}
+              onCommit={commitBottom}
+            />
           </div>
           <div className="field-row">
-            <CollarInput label={`${id}2 (Right edge -> hole)`} value={collar.offset4} min={0} max={maxL}
-              onCommit={commitRight} />
-            <CollarInput label={`${id}4 (Left edge -> hole)`} value={collar.offset2} min={0} max={maxL}
-              onCommit={commitLeft} />
+            <CollarInput
+              label={`${id}2 (Right edge -> hole)`}
+              value={collar.offset4}
+              min={0}
+              max={maxL}
+              onCommit={commitRight}
+            />
+            <CollarInput
+              label={`${id}4 (Left edge -> hole)`}
+              value={collar.offset2}
+              min={0}
+              max={maxL}
+              onCommit={commitLeft}
+            />
           </div>
         </div>
       )}

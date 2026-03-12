@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { ChaseViewer } from './components/viewer/ChaseViewer';
 import { useConfigStore } from './store/configStore';
+import type { CollarState } from './store/configStore';
 import { applyConfigState, getConfigState, exportToGLB } from './utils/ar';
 import { cameraActions } from './utils/cameraRef';
 import { RalModal } from './components/ral/RalModal';
 import { formatFrac } from './utils/format';
+import { getHoleSizeInches } from './utils/geometry';
 
 declare global {
   interface Window { QRious: any; }
@@ -17,6 +19,18 @@ declare const __LOCAL_IP__: string | undefined;
 interface AppProps {
   productId?: string;
   variantId?: string;
+}
+
+function formatHoleSummary(code: 'A' | 'B' | 'C', index: number, collar: CollarState) {
+  const size = getHoleSizeInches(collar);
+  const label = `H${index}`;
+  const holeText = collar.shape === 'rect'
+    ? `${label}: ${formatFrac(size.sizeZ)}" x ${formatFrac(size.sizeX)}" rect`
+    : `${label}: ${String.fromCharCode(8960)}${formatFrac(collar.dia)}"`;
+  const offsetText = collar.centered
+    ? ' (on center)'
+    : ` [${code}1: ${formatFrac(collar.offset3)}" ${code}2: ${formatFrac(collar.offset4)}" ${code}3: ${formatFrac(collar.offset1)}" ${code}4: ${formatFrac(collar.offset2)}"]`;
+  return holeText + offsetText;
 }
 
 export default function App({ productId, variantId }: AppProps = {}) {
@@ -179,16 +193,15 @@ export default function App({ productId, variantId }: AppProps = {}) {
     dimLines.push(t);
   }
 
+  const displayDimLines = dimLines.length >= 0 ? [
+    `${formatFrac(config.w)}" W x ${formatFrac(config.l)}" L x ${formatFrac(config.sk)}" Skirt`,
+    ...(config.holes >= 1 ? [formatHoleSummary('A', 1, config.collarA)] : []),
+    ...(config.holes >= 2 ? [formatHoleSummary('B', 2, config.collarB)] : []),
+    ...(config.holes === 3 ? [formatHoleSummary('C', 3, config.collarC)] : []),
+  ] : dimLines;
+
   return (
     <>
-      <header>
-        <div className="logo">
-          <div className="logo-mark">K</div>
-          KAMINOS
-        </div>
-        <span className="header-meta">Custom Chase Covers</span>
-      </header>
-
       <div className="app-layout" style={{ '--mobile-preview-vh': `${mobilePreviewVH}vh` } as any}>
         <div className="viewport">
           <ChaseViewer />
@@ -207,7 +220,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
                   backgroundColor: config.moveHolesMode ? '#c9873b' : undefined, 
                   color: config.moveHolesMode ? '#fff' : undefined,
                   borderColor: config.moveHolesMode ? '#c9873b' : undefined,
-                  display: 'flex', alignItems: 'center'
+                  display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', flexShrink: 0
                 }}
                 onClick={() => setConfig({ moveHolesMode: !config.moveHolesMode })}
               >
@@ -215,7 +228,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 <span>{config.moveHolesMode ? 'Done Moving' : 'Move Holes'}</span>
               </button>
             )}
-            <button className="ar-btn desktop-ar" onClick={launchAR}>View in AR</button>
+            <button className="ar-btn desktop-ar viewport-action-btn" onClick={launchAR}>View in AR</button>
           </div>
 
           {/* Mobile bottom-center controls */}
@@ -238,7 +251,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
                   onClick={(e) => { e.stopPropagation(); setDimOpen(false); }}
                   title="Close dimensions"
                 >✕</button>
-                {dimLines.map((line, i) => (
+                {displayDimLines.map((line, i) => (
                   <div key={i}>{line}</div>
                 ))}
               </>

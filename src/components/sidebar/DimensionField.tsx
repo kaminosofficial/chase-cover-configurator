@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useConfigStore } from '../../store/configStore';
 import { InfoTooltip } from './InfoTooltip';
+import { getHoleSizeInches } from '../../utils/geometry';
 
 interface DimProps {
   configKey: 'w' | 'l' | 'sk';
@@ -25,15 +26,21 @@ function DimInput({ configKey, label, unit, max, tooltip }: DimProps) {
     const gap = 1, edgeClear = 0.5;
     let minReq = 16;
     if (config.holes === 0) return minReq;
-    const dA = config.collarA.dia;
-    const dB = config.holes >= 2 ? config.collarB.dia : 0;
-    const dC = config.holes === 3 ? config.collarC.dia : 0;
+    const a = getHoleSizeInches(config.collarA);
+    const b = config.holes >= 2 ? getHoleSizeInches(config.collarB) : { sizeX: 0, sizeZ: 0 };
+    const c = config.holes === 3 ? getHoleSizeInches(config.collarC) : { sizeX: 0, sizeZ: 0 };
+    const dA = a.sizeZ;
+    const dB = b.sizeZ;
+    const dC = c.sizeZ;
+    const wA = a.sizeX;
+    const wB = b.sizeX;
+    const wC = c.sizeX;
     if (configKey === 'l') {
       if (config.holes === 1) minReq = Math.max(minReq, dA + 2 * edgeClear);
       else if (config.holes === 2) minReq = Math.max(minReq, dA + dB + 2 * gap, 2 * dA + 4 * edgeClear, 2 * dB + 4 * edgeClear);
       else minReq = Math.max(minReq, 1.5 * (dA + dB) + 3 * gap, 1.5 * (dB + dC) + 3 * gap, 3 * dA + 6 * edgeClear, 3 * dC + 6 * edgeClear, dB + 2 * edgeClear);
     } else {
-      minReq = Math.max(minReq, Math.max(dA, dB, dC) + 2 * edgeClear);
+      minReq = Math.max(minReq, Math.max(wA, wB, wC) + 2 * edgeClear);
     }
     return minReq;
   }
