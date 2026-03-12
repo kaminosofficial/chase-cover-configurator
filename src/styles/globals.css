@@ -423,6 +423,13 @@ header {
   .vp-btn { width: 28px; height: 28px; font-size: 11px; }
   .viewport-controls .ar-btn.desktop-ar { display: none; }
   .ar-btn-mobile { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); padding: 10px 20px; background: var(--accent); color: #fff; border: none; border-radius: 24px; font-family: var(--sans); font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 12px rgba(0,0,0,0.25); z-index: 5; }
+  .field input[type="number"],
+  .gauge-select,
+  .notes-textarea,
+  .qty-field input[type="number"],
+  .ral-search-input {
+    font-size: 16px;
+  }
   .dim-overlay { top: 8px; right: 8px; font-size: 9px; padding: 5px 8px; }
   .viewport-badge { display: none; }
   .price-bar { padding: 10px 14px; }
