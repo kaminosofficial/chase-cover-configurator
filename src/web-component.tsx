@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles/globals.css';
 
-class ChaseConfiguratorElement extends HTMLElement {
+class ChaseCoverConfiguratorElement extends HTMLElement {
     connectedCallback() {
         const root = this.attachShadow({ mode: 'open' });
         const container = document.createElement('div');
@@ -22,6 +22,10 @@ class ChaseConfiguratorElement extends HTMLElement {
     }
 }
 
+if (!customElements.get('chase-cover-configurator')) {
+    customElements.define('chase-cover-configurator', ChaseCoverConfiguratorElement);
+}
+
 if (!customElements.get('chase-configurator')) {
-    customElements.define('chase-configurator', ChaseConfiguratorElement);
+    customElements.define('chase-configurator', ChaseCoverConfiguratorElement);
 }

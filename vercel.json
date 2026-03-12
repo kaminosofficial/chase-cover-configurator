@@ -3,6 +3,19 @@
     "outputDirectory": "dist",
     "headers": [
         {
+            "source": "/chase-cover-configurator.iife.js",
+            "headers": [
+                {
+                    "key": "Access-Control-Allow-Origin",
+                    "value": "*"
+                },
+                {
+                    "key": "Cache-Control",
+                    "value": "public, max-age=60, s-maxage=300"
+                }
+            ]
+        },
+        {
             "source": "/chase-configurator.iife.js",
             "headers": [
                 {
@@ -34,6 +47,10 @@
         }
     ],
     "rewrites": [
+        {
+            "source": "/chase-cover-configurator.iife.js",
+            "destination": "/chase-cover-configurator.iife.js"
+        },
         {
             "source": "/chase-configurator.iife.js",
             "destination": "/chase-configurator.iife.js"

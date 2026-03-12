@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is a 3D chimney chase cover configurator built for **Kaminos**. Users configure custom chase covers by setting dimensions, hole placements, material, gauge, and options. The 3D model updates in real-time and supports AR preview. The app is deployed on **Vercel** and integrates with **Shopify** (Draft Orders) and **Google Sheets** (dynamic pricing).
+This is a 3D chase cover configurator built for **Kaminos**. Users configure custom chase covers by setting dimensions, hole placements, material, gauge, and options. The 3D model updates in real-time and supports AR preview. The app is deployed on **Vercel** and integrates with **Shopify** (Draft Orders) and **Google Sheets** (dynamic pricing).
 
 **Tech stack**: React + TypeScript + Vite + Zustand (state) + React Three Fiber (3D) + Three.js (geometry)
 
@@ -13,7 +13,7 @@ This is a 3D chimney chase cover configurator built for **Kaminos**. Users confi
 ## File Structure
 
 ```
-chase-configurator-new/
+chase-cover-configurator/
 ├── api/                                 # Vercel serverless functions
 │   ├── pricing.ts                       # GET /api/pricing — returns Google Sheet pricing (cached 5 min)
 │   └── create-order.ts                  # POST /api/create-order — creates Shopify Draft Order
@@ -103,16 +103,16 @@ All environment variables are set in Vercel (Settings > Environment Variables) a
 
 ### Vercel Build (`build:vercel`)
 
-Runs `npm run build && npm run build:shopify && cp dist-shopify/chase-configurator.iife.js dist/`. This produces:
+Runs `npm run build && npm run build:shopify && cp dist-shopify/chase-cover-configurator.iife.js dist/`. This produces:
 - `dist/index.html` + assets — standalone SPA (accessible at the Vercel URL root)
-- `dist/chase-configurator.iife.js` — the IIFE bundle loaded by Shopify
+- `dist/chase-cover-configurator.iife.js` — the IIFE bundle loaded by Shopify
 - `api/*.ts` — Vercel serverless functions (auto-detected)
 
 ### `vercel.json`
 
 - `buildCommand`: `npm run build:vercel`
 - `outputDirectory`: `dist`
-- CORS headers on `/api/*` and `/chase-configurator.iife.js` (Access-Control-Allow-Origin: *)
+- CORS headers on `/api/*` and `/chase-cover-configurator.iife.js` (Access-Control-Allow-Origin: *)
 - Cache-Control on IIFE: `public, max-age=60, s-maxage=300`
 
 ---
@@ -123,8 +123,8 @@ See `SHOPIFY-INTEGRATION-GUIDE.md` for full step-by-step setup.
 
 ### How It Works
 
-1. **Shopify product page** loads `<script src="https://your-vercel-app.vercel.app/chase-configurator.iife.js">`
-2. The IIFE (`shopify-entry.tsx`) attaches a **Shadow DOM** to `<chase-configurator>` for CSS isolation
+1. **Shopify product page** loads `<script src="https://your-vercel-app.vercel.app/chase-cover-configurator.iife.js">`
+2. The IIFE (`shopify-entry.tsx`) attaches a **Shadow DOM** to `<chase-cover-configurator>` for CSS isolation
 3. On load, it calls `GET /api/pricing` to fetch pricing constants from Google Sheets
 4. User configures the chase cover; price updates in real-time
 5. "Add to Cart" calls `POST /api/create-order` which:
@@ -138,25 +138,25 @@ See `SHOPIFY-INTEGRATION-GUIDE.md` for full step-by-step setup.
 
 - The configurator renders inside a **Shadow DOM** (`shopify-entry.tsx`) for complete CSS isolation from Shopify themes
 - CSS is injected as `globals-scoped.css?inline` into the shadow root
-- AR/QR overlays are **portaled to the light DOM** (`#chase-configurator-portal`) because `<model-viewer>` requires light DOM for AR to work
+- AR/QR overlays are **portaled to the light DOM** (`#chase-cover-configurator-portal`) because `<model-viewer>` requires light DOM for AR to work
 - Google Fonts and QRious are injected into the document head (light DOM)
 
 ### Product & Variant ID Linking
 
 The Shopify Liquid template can pass product/variant IDs:
 ```html
-<chase-configurator
+<chase-cover-configurator
   product-id="{{ product.id }}"
   variant-id="{{ product.variants.first.id }}"
   style="display:block;width:100%;height:800px;">
-</chase-configurator>
+</chase-cover-configurator>
 ```
 
 These are read by `shopify-entry.tsx` and passed to `App` as props. When present, the Draft Order line item includes `variant_id` or `product_id`, linking the order to the Shopify product catalog.
 
 ### API Base URL Detection
 
-The IIFE detects its own origin by scanning `<script>` tags for one containing `chase-configurator` in the `src`. The origin of that script URL becomes the API base (`window.__chaseApiBase`), so API calls always go back to the Vercel deployment regardless of which Shopify domain hosts the page.
+The IIFE detects its own origin by scanning `<script>` tags for one containing `chase-cover-configurator` in the `src` (and still accepts the legacy `chase-configurator` filename during the transition). The origin of that script URL becomes the API base (`window.__chaseApiBase`), so API calls always go back to the Vercel deployment regardless of which Shopify domain hosts the page.
 
 ---
 
@@ -425,7 +425,7 @@ On startup, `loadPricingFromAPI()` fetches remote pricing. When it resolves, `on
 - Built via `npm run build:shopify` (BUILD_TARGET=shopify)
 - Self-executing IIFE that:
   1. Injects Google Fonts + QRious into document head
-  2. Finds `<chase-configurator>` or `#chase-configurator-mount`
+  2. Finds `<chase-cover-configurator>` or `#chase-cover-configurator-mount`
   3. Attaches Shadow DOM with `globals-scoped.css` injected as `<style>`
   4. Creates a light-DOM portal container for AR/QR overlays
   5. Detects API base URL from the script's own `src`
@@ -434,4 +434,4 @@ On startup, `loadPricingFromAPI()` fetches remote pricing. When it resolves, `on
 
 ### Legacy Web Component (`web-component.tsx`)
 - Not used in current production flow
-- Defines a `<chase-configurator>` custom element with Shadow DOM
+- Defines a `<chase-cover-configurator>` custom element with Shadow DOM

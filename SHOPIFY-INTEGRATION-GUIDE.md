@@ -18,10 +18,10 @@ No iframe is used. The IIFE loads as a `<script>` tag directly on the Shopify pa
 ```
 Shopify Product Page
   |
-  +-- <chase-configurator product-id="..." variant-id="...">
+  +-- <chase-cover-configurator product-id="..." variant-id="...">
   |     Renders inside Shadow DOM (CSS isolated from Shopify theme)
   |
-  +-- <script src="https://your-app.vercel.app/chase-configurator.iife.js">
+  +-- <script src="https://your-app.vercel.app/chase-cover-configurator.iife.js">
         |
         +-- On load: GET /api/pricing
         |     -> Vercel serverless function
@@ -40,7 +40,7 @@ Shopify Product Page
 
 Vercel Deployment (https://your-app.vercel.app)
   +-- /                             Standalone SPA (for testing / direct access)
-  +-- /chase-configurator.iife.js   IIFE bundle loaded by Shopify
+  +-- /chase-cover-configurator.iife.js   IIFE bundle loaded by Shopify
   +-- /api/pricing                  Serverless: Google Sheets -> JSON
   +-- /api/create-order             Serverless: Config -> Shopify Draft Order
 ```
@@ -56,7 +56,7 @@ You need **one** of the following authentication methods:
 #### Option A: Static Admin API Access Token (Recommended for Store Admin apps)
 
 1. Go to Shopify Admin > Settings > Apps and sales channels > Develop apps
-2. Click "Create an app" > name it "Chase Configurator"
+2. Click "Create an app" > name it "Chase Cover Configurator"
 3. Click "Configure Admin API scopes" > enable:
    - `write_draft_orders`
    - `read_draft_orders`
@@ -116,7 +116,7 @@ You need **one** of the following authentication methods:
 
 1. Sign up at https://vercel.com (free tier works)
 2. Install Vercel CLI: `npm i -g vercel`
-3. Link the project: `cd chase-configurator-new && vercel link`
+3. Link the project: `cd chase-cover-configurator && vercel link`
 
 ---
 
@@ -177,7 +177,7 @@ SHOPIFY_ACCESS_TOKEN=shpat_your_token_here
 ## Project Structure (Integration-Specific Files)
 
 ```
-chase-configurator-new/
+chase-cover-configurator/
 ├── api/                              # Vercel serverless functions (auto-detected)
 │   ├── pricing.ts                    # GET /api/pricing
 │   └── create-order.ts              # POST /api/create-order
@@ -218,7 +218,7 @@ npm run build:vercel
 ```bash
 npm run build              # Standard Vite SPA build -> dist/
 npm run build:shopify      # IIFE build (BUILD_TARGET=shopify) -> dist-shopify/
-cp dist-shopify/chase-configurator.iife.js dist/   # Copy IIFE into dist/
+cp dist-shopify/chase-cover-configurator.iife.js dist/   # Copy IIFE into dist/
 ```
 
 Vercel then serves `dist/` as static files and auto-deploys `api/*.ts` as serverless functions.
@@ -241,7 +241,7 @@ After deploying, verify these URLs work:
 | URL | Expected |
 |-----|----------|
 | `https://your-app.vercel.app/` | Standalone configurator SPA |
-| `https://your-app.vercel.app/chase-configurator.iife.js` | JavaScript IIFE bundle |
+| `https://your-app.vercel.app/chase-cover-configurator.iife.js` | JavaScript IIFE bundle |
 | `https://your-app.vercel.app/api/pricing` | JSON with pricing constants |
 
 ---
@@ -253,8 +253,8 @@ After deploying, verify these URLs work:
 Add this to your Shopify product page template (Liquid):
 
 ```html
-<chase-configurator style="display:block;width:100%;height:800px;"></chase-configurator>
-<script src="https://your-app.vercel.app/chase-configurator.iife.js"></script>
+<chase-cover-configurator style="display:block;width:100%;height:800px;"></chase-cover-configurator>
+<script src="https://your-app.vercel.app/chase-cover-configurator.iife.js"></script>
 ```
 
 ### With Product/Variant ID Linking
@@ -262,12 +262,12 @@ Add this to your Shopify product page template (Liquid):
 To link Draft Orders to a Shopify product (so they appear properly in the catalog):
 
 ```html
-<chase-configurator
+<chase-cover-configurator
   product-id="{{ product.id }}"
   variant-id="{{ product.variants.first.id }}"
   style="display:block;width:100%;height:800px;">
-</chase-configurator>
-<script src="https://your-app.vercel.app/chase-configurator.iife.js"></script>
+</chase-cover-configurator>
+<script src="https://your-app.vercel.app/chase-cover-configurator.iife.js"></script>
 ```
 
 When `variant-id` is provided, the Draft Order line item includes `variant_id`, linking it to that specific variant. If only `product-id` is provided, it uses `product_id` instead.
@@ -277,18 +277,18 @@ When `variant-id` is provided, the Draft Order line item includes `variant_id`, 
 If you can't use a custom element, use a div with a specific ID:
 
 ```html
-<div id="chase-configurator-mount" style="width:100%;height:800px;"></div>
-<script src="https://your-app.vercel.app/chase-configurator.iife.js"></script>
+<div id="chase-cover-configurator-mount" style="width:100%;height:800px;"></div>
+<script src="https://your-app.vercel.app/chase-cover-configurator.iife.js"></script>
 ```
 
 ### What the IIFE Does on Load
 
 1. Injects Google Fonts (`DM Sans`, `JetBrains Mono`) into `<head>`
 2. Injects QRious library (for QR codes) into `<head>`
-3. Finds `<chase-configurator>` or `#chase-configurator-mount`
+3. Finds `<chase-cover-configurator>` or `#chase-cover-configurator-mount`
 4. Attaches a **Shadow DOM** to the mount element
 5. Injects scoped CSS (`globals-scoped.css`) into the shadow root
-6. Creates a light-DOM container (`#chase-configurator-portal`) for AR/QR overlays
+6. Creates a light-DOM container (`#chase-cover-configurator-portal`) for AR/QR overlays
 7. Detects the API base URL from the script's own `src` attribute
 8. Reads `product-id` and `variant-id` attributes
 9. Fetches pricing from `/api/pricing`
@@ -446,7 +446,7 @@ No code changes or redeployment needed.
 ## Troubleshooting
 
 ### "Configuration error: API base not found"
-The IIFE couldn't detect its own script URL. Make sure the script tag's `src` contains `chase-configurator` in the filename.
+The IIFE couldn't detect its own script URL. Make sure the script tag's `src` contains `chase-cover-configurator` in the filename.
 
 ### Price shows $0 or incorrect value
 - Check browser console for pricing fetch errors
@@ -462,10 +462,10 @@ The IIFE couldn't detect its own script URL. Make sure the script tag's `src` co
 ### Configurator doesn't render on Shopify
 - Verify the IIFE URL returns JavaScript (not 404)
 - Check browser console for errors
-- Ensure `<chase-configurator>` element exists in the DOM before the script loads
+- Ensure `<chase-cover-configurator>` element exists in the DOM before the script loads
 
 ### AR doesn't work on Shopify
-- AR overlays are portaled to light DOM (`#chase-configurator-portal`) — this is required for `<model-viewer>` to work
+- AR overlays are portaled to light DOM (`#chase-cover-configurator-portal`) — this is required for `<model-viewer>` to work
 - On desktop, AR shows a QR code for mobile scanning
 - On mobile, `<model-viewer>` is loaded dynamically on first AR request
 
@@ -482,7 +482,7 @@ The IIFE couldn't detect its own script URL. Make sure the script tag's `src` co
 2. [ ] Vercel env vars are set (see Environment Variables section)
 3. [ ] `vercel --prod` deploys successfully
 4. [ ] `https://your-app.vercel.app/` shows the standalone configurator
-5. [ ] `https://your-app.vercel.app/chase-configurator.iife.js` returns the JS file
+5. [ ] `https://your-app.vercel.app/chase-cover-configurator.iife.js` returns the JS file
 6. [ ] `https://your-app.vercel.app/api/pricing` returns JSON with pricing constants
 7. [ ] Shopify page loads the configurator correctly (no CSS conflicts)
 8. [ ] Price updates in real-time as user changes options

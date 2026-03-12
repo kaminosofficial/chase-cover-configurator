@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const dir = 'e:/Chimney chase configurator/chase-configurator-new/src';
+const dir = 'e:/Chase Cover Configurator/chase-cover-configurator/src';
 
 function walk(dir, callback) {
     fs.readdirSync(dir).forEach(f => {

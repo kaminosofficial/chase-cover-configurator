@@ -22,8 +22,8 @@ function getBuildConfig(isVercel: boolean, buildTarget?: string) {
     return {
       lib: {
         entry: 'src/shopify-entry.tsx',
-        name: 'ChaseConfigurator',
-        fileName: 'chase-configurator',
+        name: 'ChaseCoverConfigurator',
+        fileName: 'chase-cover-configurator',
         formats: ['iife'] as ('iife')[],
       },
       outDir: 'dist-shopify',
@@ -43,8 +43,8 @@ function getBuildConfig(isVercel: boolean, buildTarget?: string) {
   return {
     lib: {
       entry: 'src/web-component.tsx',
-      name: 'ChaseConfigurator',
-      fileName: 'chase-configurator',
+      name: 'ChaseCoverConfigurator',
+      fileName: 'chase-cover-configurator',
       formats: ['iife'] as ('iife')[],
     },
     outDir: 'dist',
