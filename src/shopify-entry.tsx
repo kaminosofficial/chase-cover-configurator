@@ -56,6 +56,16 @@ import cssText from './styles/globals-scoped.css?inline';
         );
     }
 
+    if (!mount.style.display) {
+        mount.style.display = 'block';
+    }
+    if (!mount.style.width) {
+        mount.style.width = '100%';
+    }
+    if (!mount.style.height) {
+        mount.style.height = '100%';
+    }
+
     // 4. Attach Shadow DOM for complete style isolation
     const shadow = mount.attachShadow({ mode: 'open' });
 
