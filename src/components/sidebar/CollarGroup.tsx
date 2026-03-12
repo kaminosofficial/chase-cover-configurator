@@ -503,7 +503,7 @@ export function CollarGroup({ id, label }: Props) {
         <ShapeToggle value={collar.shape} onChange={handleShapeChange} />
       </div>
 
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+      <div className="collar-options-row">
         <label className="centered-check" style={{ display: 'flex', alignItems: 'center' }}>
           <input
             type="checkbox"
@@ -556,36 +556,32 @@ export function CollarGroup({ id, label }: Props) {
           />
         </div>
       ) : (
-        <>
-          <div className="field-row">
-            <CollarInput
-              label="Length (in)"
-              value={collar.rectLength}
-              min={MIN_SIZE}
-              max={maxRectLengthInput}
-              onCommit={value => handleRectAxisChange('rectLength', value)}
-              tooltip="Rectangular opening size along the cover length."
-            />
-            <CollarInput
-              label="Width (in)"
-              value={collar.rectWidth}
-              min={MIN_SIZE}
-              max={maxRectWidthInput}
-              onCommit={value => handleRectAxisChange('rectWidth', value)}
-              tooltip="Rectangular opening size along the cover width."
-            />
-          </div>
-          <div className="field-row">
-            <CollarInput
-              label="Collar Height (in)"
-              value={collar.height}
-              min={1}
-              max={52}
-              onCommit={value => setCollar(id, { height: value })}
-              tooltip="Height of the rectangular collar sleeve above the cover surface."
-            />
-          </div>
-        </>
+        <div className="hole-size-row-rect">
+          <CollarInput
+            label="Length (in)"
+            value={collar.rectLength}
+            min={MIN_SIZE}
+            max={maxRectLengthInput}
+            onCommit={value => handleRectAxisChange('rectLength', value)}
+            tooltip="Rectangular opening size along the cover length."
+          />
+          <CollarInput
+            label="Width (in)"
+            value={collar.rectWidth}
+            min={MIN_SIZE}
+            max={maxRectWidthInput}
+            onCommit={value => handleRectAxisChange('rectWidth', value)}
+            tooltip="Rectangular opening size along the cover width."
+          />
+          <CollarInput
+            label="Collar Height (in)"
+            value={collar.height}
+            min={1}
+            max={52}
+            onCommit={value => setCollar(id, { height: value })}
+            tooltip="Height of the rectangular collar sleeve above the cover surface."
+          />
+        </div>
       )}
 
       {!collar.centered && (
