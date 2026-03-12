@@ -8,6 +8,21 @@ export interface PricingConstants {
     SKIRT_THRESHOLD: number;
     GAUGE_MULT: Record<number, number>;
     MATERIAL_MULT: Record<string, number>;
+    // Storm collar prices keyed by collar diameter × 10 (e.g. 40 = 4.0", 55 = 5.5")
+    STORM_COLLAR_PRICES: Record<number, number>;
+}
+
+/**
+ * Returns the storm collar price for a given hole diameter.
+ * Storm collar diameter = holeDia - 1". Looks up nearest size ≤ collar diameter.
+ */
+export function getStormCollarPrice(holeDia: number, prices: Record<number, number>): number {
+    const collarDiaTenths = Math.floor((holeDia - 1) * 10);
+    const keys = Object.keys(prices).map(Number).sort((a, b) => b - a);
+    for (const key of keys) {
+        if (key <= collarDiaTenths) return prices[key];
+    }
+    return 0;
 }
 
 const DEFAULT_PRICING: PricingConstants = {
@@ -20,6 +35,7 @@ const DEFAULT_PRICING: PricingConstants = {
     SKIRT_THRESHOLD: 6,
     GAUGE_MULT: {},
     MATERIAL_MULT: {},
+    STORM_COLLAR_PRICES: {},
 };
 
 function parseGvizResponse(text: string) {
@@ -34,6 +50,7 @@ function buildPricing(rows: Array<{ c?: Array<{ v?: string | number | null }> }>
     const pricing: Record<string, number> = {};
     const gaugeMult: Record<number, number> = {};
     const materialMult: Record<string, number> = {};
+    const stormCollarPrices: Record<number, number> = {};
 
     for (const row of rows) {
         const keyCell = row.c?.[0]?.v;
@@ -47,6 +64,10 @@ function buildPricing(rows: Array<{ c?: Array<{ v?: string | number | null }> }>
             gaugeMult[parseInt(keyCell.replace('GAUGE_', ''), 10)] = num;
         } else if (keyCell.startsWith('MAT_')) {
             materialMult[keyCell.replace('MAT_', '')] = num;
+        } else if (keyCell.startsWith('SC_')) {
+            // Storm collar price: key = SC_<diameter*10> (e.g. SC_55 = 5.5" collar)
+            const sizeTenths = parseInt(keyCell.replace('SC_', ''), 10);
+            if (!isNaN(sizeTenths)) stormCollarPrices[sizeTenths] = num;
         } else {
             pricing[keyCell] = num;
         }
@@ -62,6 +83,7 @@ function buildPricing(rows: Array<{ c?: Array<{ v?: string | number | null }> }>
         SKIRT_THRESHOLD: pricing.SKIRT_THRESHOLD ?? DEFAULT_PRICING.SKIRT_THRESHOLD,
         GAUGE_MULT: gaugeMult,
         MATERIAL_MULT: materialMult,
+        STORM_COLLAR_PRICES: stormCollarPrices,
     };
 }
 

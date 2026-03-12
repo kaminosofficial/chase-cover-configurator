@@ -49,7 +49,8 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const arViewerRef = useRef<any>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
   const qrUrlRef = useRef<HTMLDivElement>(null);
-  // Hash restore on mount
+  const appLayoutRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const hash = window.location.hash;
     if (hash.startsWith('#ar=')) {
@@ -60,40 +61,51 @@ export default function App({ productId, variantId }: AppProps = {}) {
     }
   }, []);
 
-  // Escape key closes overlays
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setArActive(false); setQrActive(false); }
+      if (e.key === 'Escape') {
+        setArActive(false);
+        setQrActive(false);
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, []);
 
-  // Mobile adjustable layout state
-  const [mobilePreviewVH, setMobilePreviewVH] = useState(40);
-  const [dragVH, setDragVH] = useState<number | null>(null);
+  const [mobilePreviewSize, setMobilePreviewSize] = useState(40);
+  const [dragPreviewSize, setDragPreviewSize] = useState<number | null>(null);
   const isDraggingRef = useRef(false);
+  const dragPointerOffsetRef = useRef(0);
+
+  const getPreviewSizeFromPointer = (clientY: number) => {
+    const layoutRect = appLayoutRef.current?.getBoundingClientRect();
+    if (!layoutRect || layoutRect.height <= 0) return null;
+
+    const dividerY = clientY - dragPointerOffsetRef.current;
+    const relativeY = dividerY - layoutRect.top;
+    const nextSize = (relativeY / layoutRect.height) * 100;
+    return Math.max(30, Math.min(70, nextSize));
+  };
 
   useEffect(() => {
     const handlePointerMove = (e: PointerEvent) => {
       if (!isDraggingRef.current) return;
-      e.preventDefault(); // Prevent scrolling while dragging
+      e.preventDefault();
 
-      // Calculate new vh based on pointer Y
-      const newVH = (e.clientY / window.innerHeight) * 100;
-      
-      // Clamp between 30 and 70 limits per user request
-      const clampedVH = Math.max(30, Math.min(70, newVH));
-      setDragVH(clampedVH);
+      const nextSize = getPreviewSizeFromPointer(e.clientY);
+      if (nextSize !== null) {
+        setDragPreviewSize(nextSize);
+      }
     };
 
     const handlePointerUp = () => {
       if (isDraggingRef.current) {
         isDraggingRef.current = false;
-        setDragVH(prev => {
-          if (prev !== null) setMobilePreviewVH(prev);
+        setDragPreviewSize(prev => {
+          if (prev !== null) setMobilePreviewSize(prev);
           return null;
         });
+        dragPointerOffsetRef.current = 0;
         document.body.style.userSelect = '';
         document.body.style.touchAction = '';
       }
@@ -101,9 +113,11 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
     window.addEventListener('pointermove', handlePointerMove, { passive: false });
     window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
     return () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
   }, []);
 
@@ -114,21 +128,16 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
   async function launchAR() {
     if (!isMobile()) {
-      // Desktop: generate QR code
       const stateStr = getConfigState(config);
 
       let baseUrl = window.location.origin;
-      // If we're on localhost but we have a real network IP from Vite, inject it
       if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && typeof __LOCAL_IP__ !== 'undefined' && __LOCAL_IP__) {
         baseUrl = `http://${__LOCAL_IP__}:${window.location.port}`;
       }
 
-      // Use canonical URL if available (avoids Shopify preview paths that 404)
       const canonical = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
       const pagePath = canonical ? canonical.href : baseUrl + window.location.pathname;
-      // Strip any query params from canonical, keep only origin+path
       const pageUrl = pagePath.split('?')[0];
-
       const url = pageUrl + '#ar=' + stateStr;
 
       if (qrCanvasRef.current && window.QRious) {
@@ -138,11 +147,10 @@ export default function App({ productId, variantId }: AppProps = {}) {
       setQrActive(true);
       return;
     }
-    // Mobile: dynamically load model-viewer if not already loaded, then export GLB
+
     setArActive(true);
     setArLoading(true);
     try {
-      // Dynamically load model-viewer script if not present
       if (!customElements.get('model-viewer')) {
         await new Promise<void>((resolve, reject) => {
           const script = document.createElement('script');
@@ -152,7 +160,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
           script.onerror = () => reject(new Error('Failed to load model-viewer'));
           document.head.appendChild(script);
         });
-        // Wait a moment for custom element registration
         await new Promise(r => setTimeout(r, 500));
       }
 
@@ -174,67 +181,66 @@ export default function App({ productId, variantId }: AppProps = {}) {
     }
   }
 
-  // Dimension overlay content
-  const dimLines: string[] = [];
-  dimLines.push(`${formatFrac(config.w)}" W × ${formatFrac(config.l)}" L × ${formatFrac(config.sk)}" Skirt`);
-  if (config.holes >= 1) {
-    let t = `H1: ⌀${formatFrac(config.collarA.dia)}"`;
-    t += config.collarA.centered ? ' (on center)' : ` [A1: ${formatFrac(config.collarA.offset3)}" A2: ${formatFrac(config.collarA.offset4)}" A3: ${formatFrac(config.collarA.offset1)}" A4: ${formatFrac(config.collarA.offset2)}"]`;
-    dimLines.push(t);
-  }
-  if (config.holes >= 2) {
-    let t = `H2: ⌀${formatFrac(config.collarB.dia)}"`;
-    t += config.collarB.centered ? ' (on center)' : ` [B1: ${formatFrac(config.collarB.offset3)}" B2: ${formatFrac(config.collarB.offset4)}" B3: ${formatFrac(config.collarB.offset1)}" B4: ${formatFrac(config.collarB.offset2)}"]`;
-    dimLines.push(t);
-  }
-  if (config.holes === 3) {
-    let t = `H3: ⌀${formatFrac(config.collarC.dia)}"`;
-    t += config.collarC.centered ? ' (on center)' : ` [C1: ${formatFrac(config.collarC.offset3)}" C2: ${formatFrac(config.collarC.offset4)}" C3: ${formatFrac(config.collarC.offset1)}" C4: ${formatFrac(config.collarC.offset2)}"]`;
-    dimLines.push(t);
-  }
-
-  const displayDimLines = dimLines.length >= 0 ? [
+  const displayDimLines = [
     `${formatFrac(config.w)}" W x ${formatFrac(config.l)}" L x ${formatFrac(config.sk)}" Skirt`,
     ...(config.holes >= 1 ? [formatHoleSummary('A', 1, config.collarA)] : []),
     ...(config.holes >= 2 ? [formatHoleSummary('B', 2, config.collarB)] : []),
     ...(config.holes === 3 ? [formatHoleSummary('C', 3, config.collarC)] : []),
-  ] : dimLines;
+  ];
 
   return (
     <>
-      <div className="app-layout" style={{ '--mobile-preview-vh': `${mobilePreviewVH}vh` } as any}>
+      <div className="configurator-header">
+        <h1>Chase Cover Configurator</h1>
+      </div>
+
+      <div
+        ref={appLayoutRef}
+        className="app-layout"
+        style={{ '--mobile-preview-size': `${mobilePreviewSize}%` } as any}
+      >
         <div className="viewport">
           <ChaseViewer />
 
-          {/* Viewport controls top-left */}
           <div className="viewport-controls">
-            <button className="vp-btn" title="Reset" onClick={() => cameraActions.reset()}>⟳</button>
-            <button className="vp-btn" title="Top" onClick={() => cameraActions.top()}>⊤</button>
-            <button className="vp-btn" title="Front" onClick={() => cameraActions.front()}>◻</button>
+            <button className="vp-btn" title="Reset" onClick={() => cameraActions.reset()}>
+              &#8635;
+            </button>
+            <button className="vp-btn" title="Top" onClick={() => cameraActions.top()}>
+              &#8868;
+            </button>
+            <button className="vp-btn" title="Front" onClick={() => cameraActions.front()}>
+              &#9723;
+            </button>
             {config.holes > 0 && (
-              <button 
-                className="vp-btn" 
+              <button
+                className="vp-btn"
                 title={config.moveHolesMode ? 'Done Moving Holes' : 'Move Holes'}
-                style={{ 
-                  width: 'auto', padding: '0 12px', gap: '6px', fontWeight: 600, fontSize: '12px',
-                  backgroundColor: config.moveHolesMode ? '#c9873b' : undefined, 
+                style={{
+                  width: 'auto',
+                  padding: '0 12px',
+                  gap: '6px',
+                  fontWeight: 600,
+                  fontSize: '12px',
+                  backgroundColor: config.moveHolesMode ? '#c9873b' : undefined,
                   color: config.moveHolesMode ? '#fff' : undefined,
                   borderColor: config.moveHolesMode ? '#c9873b' : undefined,
-                  display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', flexShrink: 0
+                  display: 'flex',
+                  alignItems: 'center',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
                 }}
                 onClick={() => setConfig({ moveHolesMode: !config.moveHolesMode })}
               >
-                <span>{config.moveHolesMode ? '✓' : '✥'}</span>
                 <span>{config.moveHolesMode ? 'Done Moving' : 'Move Holes'}</span>
               </button>
             )}
             <button className="ar-btn desktop-ar viewport-action-btn" onClick={launchAR}>View in AR</button>
           </div>
 
-          {/* Mobile bottom-center controls */}
           <div className="mobile-only-controls" style={{ position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 8, zIndex: 5 }}>
-            <button 
-              className="ar-btn-mobile" 
+            <button
+              className="ar-btn-mobile"
               style={{ position: 'relative', bottom: 'auto', left: 'auto', transform: 'none', margin: 0 }}
               onClick={launchAR}
             >
@@ -242,7 +248,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
             </button>
           </div>
 
-          {/* Dimension overlay top-right — collapsible */}
           <div className={`dim-overlay${dimOpen ? ' dim-open' : ''}`}>
             {dimOpen ? (
               <>
@@ -250,32 +255,65 @@ export default function App({ productId, variantId }: AppProps = {}) {
                   className="dim-close"
                   onClick={(e) => { e.stopPropagation(); setDimOpen(false); }}
                   title="Close dimensions"
-                >✕</button>
+                  aria-label="Close dimensions"
+                >
+                  &times;
+                </button>
                 {displayDimLines.map((line, i) => (
                   <div key={i}>{line}</div>
                 ))}
               </>
             ) : (
-              <span className="dim-icon" title="Show dimensions" onClick={() => setDimOpen(true)}>📐</span>
+              <button
+                type="button"
+                className="dim-icon"
+                title="Show dimensions"
+                aria-label="Show dimensions"
+                onClick={() => setDimOpen(true)}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M6 8h12" />
+                  <path d="M6 16h12" />
+                  <path d="M8 6v12" />
+                  <path d="M16 6v12" />
+                  <path d="M4 12h16" />
+                </svg>
+              </button>
             )}
           </div>
 
           <div className="viewport-badge">Drag to orbit · Scroll to zoom · Right-drag to pan</div>
         </div>
 
-        {/* Drag Indicator Overlay */}
-        {dragVH !== null && (
-          <div style={{
-            position: 'absolute', top: `${dragVH}vh`, left: 0, right: 0,
-            height: '2px', background: 'var(--accent)', zIndex: 9999, pointerEvents: 'none'
-          }} />
+        {dragPreviewSize !== null && (
+          <div
+            style={{
+              position: 'absolute',
+              top: `${dragPreviewSize}%`,
+              left: 0,
+              right: 0,
+              height: '2px',
+              background: 'var(--accent)',
+              zIndex: 9999,
+              pointerEvents: 'none',
+            }}
+          />
         )}
 
-        {/* Mobile Adjustable Slider (only visible via CSS on mobile) */}
-        <div 
+        <div
           className="mobile-divider"
-          onPointerDown={() => {
+          onPointerDown={(e) => {
+            e.preventDefault();
+
+            const handleRect = e.currentTarget.getBoundingClientRect();
+            const dividerY = handleRect.top + (handleRect.height / 2);
+            dragPointerOffsetRef.current = e.clientY - dividerY;
+
             isDraggingRef.current = true;
+            const nextSize = getPreviewSizeFromPointer(e.clientY);
+            if (nextSize !== null) {
+              setDragPreviewSize(nextSize);
+            }
             document.body.style.userSelect = 'none';
             document.body.style.touchAction = 'none';
           }}
@@ -312,8 +350,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 shopifyVariantId: variantId,
               };
 
-              // Optional: show a loading state here (could add a state var and overlay)
-
               const res = await fetch(`${apiBase}/api/create-order`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -339,17 +375,14 @@ export default function App({ productId, variantId }: AppProps = {}) {
         />
       </div>
 
-      {/* RAL Modal */}
       <RalModal open={ralOpen} onClose={() => setRalOpen(false)} />
 
-      {/* AR/QR Overlays — portaled to light DOM on Shopify so model-viewer AR works */}
       {(() => {
         const portalTarget = (window as any).__chasePortalContainer as HTMLElement | undefined;
         const overlays = (
           <>
-            {/* AR Overlay (mobile model-viewer) */}
             <div className={`ar-overlay${arActive ? ' active' : ''}`}>
-              <button className="ar-close" onClick={() => setArActive(false)}>✕</button>
+              <button className="ar-close" onClick={() => setArActive(false)}>&times;</button>
               <model-viewer
                 ref={arViewerRef}
                 ar
@@ -367,13 +400,12 @@ export default function App({ productId, variantId }: AppProps = {}) {
                   Place in your space
                 </button>
               </model-viewer>
-              {arLoading && <div className="ar-loading">Preparing 3D model…</div>}
+              {arLoading && <div className="ar-loading">Preparing 3D model...</div>}
             </div>
 
-            {/* QR Overlay (desktop) */}
             <div className={`qr-overlay${qrActive ? ' active' : ''}`}>
               <div className="qr-card">
-                <button className="qr-close" onClick={() => setQrActive(false)}>✕</button>
+                <button className="qr-close" onClick={() => setQrActive(false)}>&times;</button>
                 <div className="qr-title">View in Your Space</div>
                 <div className="qr-desc">Scan this QR code with your phone's camera to place the chase cover in your environment.</div>
                 <div className="qr-canvas-container">
@@ -383,7 +415,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
               </div>
             </div>
 
-            {/* Mobile AR Prompt (hash restore) */}
             <div className={`ar-mobile-prompt${showMobilePrompt ? ' active' : ''}`}>
               <h2>Configuration Loaded</h2>
               <p>Your custom chase cover is ready to be placed in AR.</p>

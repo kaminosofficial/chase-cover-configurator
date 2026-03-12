@@ -28,7 +28,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
   const config = useConfigStore(s => s);
   const holes = config.holes;
   const pc = config.pc;
-  
+
   const [introExpanded, setIntroExpanded] = useState(true);
 
   // Price breakdown rows
@@ -55,59 +55,59 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
   const total = subtotal * gaugeMult * matMult;
 
   const bdRows: { label: string; value: string; cls: string }[] = [
-    { label: `Base Price (${config.w}" × ${config.l}")`, value: fmt(base), cls: 'bd-row' },
+    { label: `Base Price (${config.w}" x ${config.l}")`, value: fmt(base), cls: 'bd-row' },
     { label: `${holes} Flue Hole${holes !== 1 ? 's' : ''}`, value: fmt(holeAmt), cls: 'bd-row' },
     ...scItems.map(item => ({
-      label: `Storm Collar – ${item.label}`,
+      label: `Storm Collar - ${item.label}`,
       value: fmt(item.price),
       cls: 'bd-row',
     })),
     ...(skirtAmt ? [{ label: 'Oversized Skirt Surcharge', value: fmt(skirtAmt), cls: 'bd-row' }] : []),
     ...(pcAmt ? [{ label: 'Powder Coating', value: fmt(pcAmt), cls: 'bd-row' }] : []),
     { label: 'Subtotal', value: fmt(subtotal), cls: 'bd-sub' },
-    ...(gaugeMult !== 1 ? [{ label: `${config.gauge} ga Material`, value: '× ' + gaugeMult.toFixed(2), cls: 'bd-row' }] : []),
-    ...(matMult !== 1 ? [{ label: config.mat === 'copper' ? 'Copper' : 'Galvanized Steel', value: '× ' + matMult.toFixed(2), cls: 'bd-row' }] : []),
+    ...(gaugeMult !== 1 ? [{ label: `${config.gauge} ga Material`, value: 'x ' + gaugeMult.toFixed(2), cls: 'bd-row' }] : []),
+    ...(matMult !== 1 ? [{ label: config.mat === 'copper' ? 'Copper' : 'Galvanized Steel', value: 'x ' + matMult.toFixed(2), cls: 'bd-row' }] : []),
     { label: 'TOTAL ESTIMATE', value: fmt(total), cls: 'bd-total' },
   ];
 
   return (
     <div className="sidebar">
       <div className="sidebar-scroll">
-        <button 
-          className="bd-toggle" 
-          onClick={() => setIntroExpanded(!introExpanded)}
-          style={{ width: '100%', marginBottom: introExpanded ? '12px' : '16px', justifyContent: 'center', background: 'var(--surface)', padding: '10px', border: '1px solid var(--border)', borderRadius: '6px' }}
-        >
-          <span>{introExpanded ? '▼' : '►'}</span> Project Info & Instructions
-        </button>
+        <section className={`project-info-card${introExpanded ? ' open' : ''}`}>
+          <button
+            className={`project-info-toggle${introExpanded ? ' open' : ''}`}
+            onClick={() => setIntroExpanded(!introExpanded)}
+            aria-expanded={introExpanded}
+            aria-controls="project-info-panel"
+          >
+            <span className="project-info-toggle-text">Project Info &amp; Instructions</span>
+            <span className="project-info-toggle-icon" aria-hidden="true" />
+          </button>
 
-        {introExpanded && (
-          <>
-            {/* Product Description */}
-            <div className="product-desc" style={{ marginBottom: '16px', paddingBottom: '12px' }}>
-              <h2>Chase Cover Configurator</h2>
-              <div className={`product-desc-text${descExpanded ? ' expanded' : ''}`}>
-                Kaminos chase covers are custom-fabricated to your exact measurements for a precise,
-                weatherproof fit. Choose from premium galvanized steel or copper — each built to
-                outlast and outperform standard covers. Add diagonal creases for improved water
-                drainage and a drip edge for extra protection. Backed by our lifetime warranty
-                against rust and corrosion.
+          {introExpanded && (
+            <div id="project-info-panel" className="project-info-body">
+              <div className="product-desc">
+                <div className={`product-desc-text${descExpanded ? ' expanded' : ''}`}>
+                  Kaminos chase covers are custom-fabricated to your exact measurements for a precise,
+                  weatherproof fit. Choose from premium galvanized steel or copper - each built to
+                  outlast and outperform standard covers. Add diagonal creases for improved water
+                  drainage and a drip edge for extra protection. Backed by our lifetime warranty
+                  against rust and corrosion.
+                </div>
+                <button className="desc-toggle" onClick={() => setDescExpanded(!descExpanded)}>
+                  {descExpanded ? 'Show Less' : 'Read More'}
+                </button>
               </div>
-              <button className="desc-toggle" onClick={() => setDescExpanded(!descExpanded)}>
-                {descExpanded ? 'Show Less' : 'Read More'}
-              </button>
-            </div>
 
-            {/* Measurement Note */}
-            <div className="measure-note" style={{ marginBottom: '20px' }}>
-              ⚠️ You must add an extra <strong>¼"</strong> to both the length and width measurements for proper
-              fitment. If you need a custom shape, please <a href="tel:+18887779789">give us a call</a>.{' '}
-              Need help measuring? <a href="https://kaminos.com/measuring-guide" target="_blank" rel="noreferrer">Click here</a>.
+              <div className="measure-note">
+                You must add an extra <strong>1/4"</strong> to both the length and width measurements for proper
+                fitment. If you need a custom shape, please <a href="tel:+18887779789">give us a call</a>.{' '}
+                Need help measuring? <a href="https://kaminos.com/measuring-guide" target="_blank" rel="noreferrer">Click here</a>.
+              </div>
             </div>
-          </>
-        )}
+          )}
+        </section>
 
-        {/* Dimensions */}
         <div className="section">
           <div className="section-title">Cover Dimensions</div>
           <DimensionFields />
@@ -121,14 +121,12 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
           </label>
         </div>
 
-        {/* Options */}
         <div className="section">
           <div className="section-title">Options</div>
-          <ToggleRow id="drip" label="Drip Edge" tooltip="A drip edge extends beyond the skirt at a 45° angle, directing rainwater away from the chase to prevent water damage." />
+          <ToggleRow id="drip" label="Drip Edge" tooltip="A drip edge extends beyond the skirt at a 45-degree angle, directing rainwater away from the chase to prevent water damage." />
           <ToggleRow id="diag" label="Diagonal Crease" tooltip="Diagonal creases from each corner create a peaked surface that channels water and debris off the cover." />
         </div>
 
-        {/* Flue Holes */}
         <div className="section">
           <div className="section-title">
             Flue Holes
@@ -140,7 +138,6 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
           {holes === 3 && <CollarGroup id="C" label="Hole 3 (Right)" />}
         </div>
 
-        {/* Material & Gauge */}
         <div className="section">
           <div className="section-title">
             Material &amp; Gauge
@@ -151,14 +148,13 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
             <div className="field">
               <label style={{ display: 'flex', alignItems: 'center' }}>
                 Gauge
-                <InfoTooltip text="Gauge indicates metal thickness — lower numbers are thicker and more durable. 24ga is standard for most residential applications." />
+                <InfoTooltip text="Gauge indicates metal thickness - lower numbers are thicker and more durable. 24ga is standard for most residential applications." />
               </label>
               <GaugeSelect />
             </div>
           </div>
         </div>
 
-        {/* Color Options — hidden for copper */}
         {config.mat !== 'copper' && (
           <div className="section">
             <div className="section-title">POWDER COATING</div>
@@ -167,14 +163,12 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
           </div>
         )}
 
-        {/* Special Notes */}
         <div className="section">
           <div className="section-title">Special Notes</div>
           <NotesField />
         </div>
       </div>
 
-      {/* Price Bar — fixed at bottom */}
       <div className="price-bar">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
           <button
@@ -182,11 +176,11 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
             onClick={() => setBdOpen(!bdOpen)}
             style={{ marginBottom: 0 }}
           >
-            <span>{bdOpen ? '▼' : '▲'}</span> Price Breakdown
+            <span>{bdOpen ? '\u25BC' : '\u25B2'}</span> Price Breakdown
           </button>
           <PriceDisplay />
         </div>
-        
+
         <div className={`bd-panel${bdOpen ? ' open' : ''}`}>
           {bdRows.map((row, i) => (
             <div key={i} className={row.cls}>

@@ -1,11 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fetchPricingFromPublicSheet } from '../lib/pricing-sheet.js';
+import { fetchPricingFromPublicSheet, getStormCollarPrice } from '../lib/pricing-sheet.js';
 
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE!;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN; // shpat_...
 const SHOPIFY_CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;
 const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID!;
+const SHOPIFY_TOKEN_URL = `https://${SHOPIFY_STORE}/admin/oauth/access_token`;
 
 interface OrderConfig {
     w: number;
@@ -18,9 +19,9 @@ interface OrderConfig {
     pc: boolean;
     pcCol: string;
     holes: number;
-    collarA?: { dia: number; height: number; centered: boolean; offset1: number; offset2: number; offset3: number; offset4: number };
-    collarB?: { dia: number; height: number; centered: boolean; offset1: number; offset2: number; offset3: number; offset4: number };
-    collarC?: { dia: number; height: number; centered: boolean; offset1: number; offset2: number; offset3: number; offset4: number };
+    collarA?: { dia: number; height: number; centered: boolean; offset1: number; offset2: number; offset3: number; offset4: number; stormCollar?: boolean };
+    collarB?: { dia: number; height: number; centered: boolean; offset1: number; offset2: number; offset3: number; offset4: number; stormCollar?: boolean };
+    collarC?: { dia: number; height: number; centered: boolean; offset1: number; offset2: number; offset3: number; offset4: number; stormCollar?: boolean };
     quantity: number;
     notes: string;
     shopifyProductId?: string;
@@ -29,6 +30,10 @@ interface OrderConfig {
 
 // In-memory cache for the Shopify Admin API token
 let shopifyTokenCache: { token: string; expiresAt: number } | null = null;
+
+function wait(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 async function getShopifyAccessToken() {
     // 1. Prefer static token if provided
@@ -44,31 +49,56 @@ async function getShopifyAccessToken() {
         throw new Error('Missing Shopify Credentials. Please provide SHOPIFY_ACCESS_TOKEN or CLIENT_ID/SECRET.');
     }
 
-    const res = await fetch(`https://${SHOPIFY_STORE}/admin/oauth/access_token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            client_id: SHOPIFY_CLIENT_ID,
-            client_secret: SHOPIFY_CLIENT_SECRET,
-            grant_type: 'client_credentials'
-        })
+    const tokenBody = new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: SHOPIFY_CLIENT_ID,
+        client_secret: SHOPIFY_CLIENT_SECRET,
     });
 
-    if (!res.ok) {
-        const text = await res.text();
-        console.error('Shopify Auth Error:', text);
-        throw new Error(`Failed to generate Shopify access token: ${res.status} ${text}`);
+    let lastStatus = 0;
+    let lastText = '';
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        const res = await fetch(SHOPIFY_TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: tokenBody.toString(),
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            const expiresIn = data.expires_in || 3600;
+
+            shopifyTokenCache = {
+                token: data.access_token,
+                expiresAt: Date.now() + expiresIn * 1000
+            };
+
+            return data.access_token;
+        }
+
+        lastStatus = res.status;
+        lastText = await res.text();
+
+        if (attempt < 2 && [502, 503, 504].includes(res.status)) {
+            await wait(500 * attempt);
+            continue;
+        }
+
+        break;
     }
 
-    const data = await res.json();
-    const expiresIn = data.expires_in || 3600;
+    console.error('Shopify Auth Error:', lastText);
 
-    shopifyTokenCache = {
-        token: data.access_token,
-        expiresAt: Date.now() + expiresIn * 1000
-    };
+    if (lastText.includes('shop_not_permitted')) {
+        throw new Error(
+            'Failed to generate Shopify access token: Shopify rejected client_credentials for this shop. ' +
+            'Confirm the app was created in the Dev Dashboard, released with the required Admin API scopes, ' +
+            'and installed on this exact store under the same organization that owns the app.'
+        );
+    }
 
-    return data.access_token;
+    throw new Error(`Failed to generate Shopify access token: ${lastStatus} ${lastText}`);
 }
 
 async function fetchPricingFromSheet() {
@@ -77,10 +107,20 @@ async function fetchPricingFromSheet() {
 
 function computePrice(config: OrderConfig, p: Awaited<ReturnType<typeof fetchPricingFromSheet>>): number {
     const base = p.AREA_RATE * config.w * config.l + p.LINEAR_RATE * (config.w + config.l) + p.BASE_FIXED;
+
+    // Storm collar cost: one collar per hole where stormCollar is enabled
+    let stormCollarCost = 0;
+    const collars = [config.collarA, config.collarB, config.collarC];
+    for (let i = 0; i < config.holes; i++) {
+        const c = collars[i];
+        if (c?.stormCollar) stormCollarCost += getStormCollarPrice(c.dia, p.STORM_COLLAR_PRICES ?? {});
+    }
+
     const subtotal = base
         + config.holes * p.HOLE_PRICE
         + (config.sk >= p.SKIRT_THRESHOLD ? p.SKIRT_SURCHARGE : 0)
-        + (config.pc ? p.POWDER_COAT : 0);
+        + (config.pc ? p.POWDER_COAT : 0)
+        + stormCollarCost;
     return subtotal * (p.GAUGE_MULT[config.gauge] || 1) * (p.MATERIAL_MULT[config.mat] || 1);
 }
 
