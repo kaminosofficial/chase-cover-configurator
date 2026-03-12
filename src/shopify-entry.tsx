@@ -21,6 +21,40 @@ import cssText from './styles/globals-scoped.css?inline';
 (function () {
     'use strict';
 
+    const patchViewportForIOS = () => {
+        const isIOS =
+            /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        if (!isIOS) return;
+
+        let viewport = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
+        if (!viewport) {
+            viewport = document.createElement('meta');
+            viewport.name = 'viewport';
+            document.head.appendChild(viewport);
+        }
+
+        const existingContent = viewport.getAttribute('content') || 'width=device-width, initial-scale=1';
+        const entries = new Map<string, string>();
+        for (const part of existingContent.split(',')) {
+            const [rawKey, rawValue] = part.split('=');
+            const key = rawKey?.trim();
+            if (!key) continue;
+            entries.set(key.toLowerCase(), rawValue?.trim() ?? '');
+        }
+
+        entries.set('maximum-scale', '1.0');
+        entries.set('user-scalable', '0');
+
+        const nextContent = Array.from(entries.entries())
+            .map(([key, value]) => (value ? `${key}=${value}` : key))
+            .join(', ');
+
+        viewport.setAttribute('content', nextContent);
+    };
+
+    patchViewportForIOS();
+
     // 1. Inject Google Fonts into document head (must be in light DOM for fonts to load)
     const FONT_ID = 'chase-configurator-fonts';
     if (!document.getElementById(FONT_ID)) {
