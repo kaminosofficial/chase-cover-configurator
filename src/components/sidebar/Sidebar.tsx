@@ -35,7 +35,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
   const base = PRICING.AREA_RATE * config.w * config.l + PRICING.LINEAR_RATE * (config.w + config.l) + PRICING.BASE_FIXED;
   const holeAmt = holes * PRICING.HOLE_PRICE;
   const skirtAmt = config.sk >= PRICING.SKIRT_THRESHOLD ? PRICING.SKIRT_SURCHARGE : 0;
-  const pcAmt = pc ? PRICING.POWDER_COAT : 0;
+  const pcAmt = pc && config.mat !== 'copper' ? PRICING.POWDER_COAT : 0;
 
   // Per-hole storm collar costs (only for holes with storm collar enabled)
   const holeLabels = holes === 1

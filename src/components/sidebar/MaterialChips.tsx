@@ -8,7 +8,7 @@ export function MaterialChips() {
       <button className={`material-chip${mat === 'galvanized' ? ' active' : ''}`} onClick={() => set({ mat: 'galvanized' })}>
         Galvanized Steel
       </button>
-      <button className={`material-chip${mat === 'copper' ? ' active' : ''}`} onClick={() => set({ mat: 'copper', pc: false })}>
+      <button className={`material-chip${mat === 'copper' ? ' active' : ''}`} onClick={() => set({ mat: 'copper' })}>
         Copper
       </button>
     </div>

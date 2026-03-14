@@ -31,20 +31,6 @@
 }
 .chase-cover-configurator-root .header-meta { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
 
-.chase-cover-configurator-root .configurator-header {
-  background: #fff;
-  padding: 24px 20px;
-  flex-shrink: 0;
-}
-
-.chase-cover-configurator-root .configurator-header h1 {
-  font-family: var(--sans);
-  font-size: clamp(32px, 4vw, 42px);
-  font-weight: 500;
-  line-height: 1.1;
-  text-align: center;
-  color: #000;
-}
 
 .chase-cover-configurator-root .app-layout { display: flex; flex: 1; overflow: hidden; position: relative; min-height: 0; }
 
@@ -83,14 +69,14 @@
   padding: 0; background: transparent; border: none; backdrop-filter: none;
 }
 .chase-cover-configurator-root .dim-overlay .dim-icon {
-  width: 34px; height: 34px; border: 1px solid rgba(255,255,255,0.6);
-  border-radius: 999px; background: rgba(255,255,255,0.9); color: var(--accent);
+  width: 34px; height: 34px; border: none; border-radius: 0;
+  background: transparent; color: #6b6460;
   cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
-  line-height: 1; box-shadow: 0 6px 16px rgba(28,25,20,0.12); transition: transform 0.15s, background-color 0.15s, color 0.15s;
+  line-height: 1; transition: transform 0.15s, color 0.15s; padding: 0;
 }
-.chase-cover-configurator-root .dim-overlay .dim-icon:hover { background: #fff; color: var(--accent-hover); transform: translateY(-1px); }
+.chase-cover-configurator-root .dim-overlay .dim-icon:hover { color: var(--accent); transform: scale(1.2); background: transparent; }
 .chase-cover-configurator-root .dim-overlay .dim-icon svg {
-  width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8;
+  width: 28px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.6;
   stroke-linecap: round; stroke-linejoin: round;
 }
 .chase-cover-configurator-root .dim-overlay .dim-close {
@@ -440,11 +426,9 @@
 
 .chase-cover-configurator-root .mobile-divider { display: none; }
 
-@media (max-width: 900px) {
+@media (max-width: 767px) {
   .chase-cover-configurator-root header { display: none; }
   .chase-cover-configurator-root { overflow: auto; }
-  .chase-cover-configurator-root .configurator-header { padding-top: 16px; padding-bottom: 16px; }
-  .chase-cover-configurator-root .configurator-header h1 { font-size: clamp(24px, 7vw, 30px); }
   .chase-cover-configurator-root .app-layout { flex-direction: column; min-height: 0; }
   
   .chase-cover-configurator-root .viewport { flex: none; height: var(--mobile-preview-size, 40%); min-height: 0; }
@@ -501,7 +485,7 @@
   .chase-cover-configurator-root .viewport-controls { top: 10px; left: 10px; gap: 4px; }
   .chase-cover-configurator-root .vp-btn { width: 28px; height: 28px; font-size: 11px; }
   .chase-cover-configurator-root .viewport-controls .ar-btn.desktop-ar { display: none; }
-  .chase-cover-configurator-root .ar-btn-mobile { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); padding: 10px 20px; background: var(--accent); color: #fff; border: none; border-radius: 24px; font-family: var(--sans); font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 12px rgba(0,0,0,0.25); z-index: 5; }
+  .chase-cover-configurator-root .ar-btn-mobile { width: 44px; height: 44px; padding: 0; background: var(--accent); color: #fff; border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 12px rgba(0,0,0,0.3); z-index: 5; }
   .chase-cover-configurator-root .field input[type="number"],
   .chase-cover-configurator-root .gauge-select,
   .chase-cover-configurator-root .notes-textarea,

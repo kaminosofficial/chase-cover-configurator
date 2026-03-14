@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { ChaseViewer } from './components/viewer/ChaseViewer';
-import { useConfigStore } from './store/configStore';
+import { useConfigStore, saveConfigForRestore, restoreConfigIfNeeded } from './store/configStore';
 import type { CollarState } from './store/configStore';
 import { applyConfigState, getConfigState, exportToGLB } from './utils/ar';
 import { cameraActions } from './utils/cameraRef';
@@ -54,10 +54,14 @@ export default function App({ productId, variantId }: AppProps = {}) {
   useEffect(() => {
     const hash = window.location.hash;
     if (hash.startsWith('#ar=')) {
+      // AR config takes priority — don't restore from cart
       const restored = applyConfigState(hash.slice(4));
       setConfig(restored as any);
       setShowMobilePrompt(true);
       history.replaceState(null, '', window.location.pathname + window.location.search);
+    } else {
+      // Restore config only when navigating back from cart (not on fresh refresh)
+      restoreConfigIfNeeded();
     }
   }, []);
 
@@ -122,12 +126,11 @@ export default function App({ productId, variantId }: AppProps = {}) {
   }, []);
 
   const isMobile = () =>
-    window.innerWidth <= 900 ||
-    /Mobi|Android|iPad|iPhone/i.test(navigator.userAgent) ||
-    (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
+    window.innerWidth <= 767 ||
+    /Mobi|Android|iPhone/i.test(navigator.userAgent);
 
-  async function launchAR() {
-    if (!isMobile()) {
+  async function launchAR(direct = false) {
+    if (!direct && !isMobile()) {
       const stateStr = getConfigState(config);
 
       let baseUrl = window.location.origin;
@@ -190,10 +193,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
   return (
     <>
-      <div className="configurator-header">
-        <h1>Chase Cover Configurator</h1>
-      </div>
-
       <div
         ref={appLayoutRef}
         className="app-layout"
@@ -235,16 +234,24 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 <span>{config.moveHolesMode ? 'Done Moving' : 'Move Holes'}</span>
               </button>
             )}
-            <button className="ar-btn desktop-ar viewport-action-btn" onClick={launchAR}>View in AR</button>
+            <button className="ar-btn desktop-ar viewport-action-btn" onClick={() => launchAR()}>View in AR</button>
           </div>
 
-          <div className="mobile-only-controls" style={{ position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 8, zIndex: 5 }}>
+          <div className="mobile-only-controls" style={{ position: 'absolute', bottom: 14, left: 14, display: 'flex', gap: 8, zIndex: 5 }}>
             <button
               className="ar-btn-mobile"
               style={{ position: 'relative', bottom: 'auto', left: 'auto', transform: 'none', margin: 0 }}
-              onClick={launchAR}
+              onClick={() => launchAR(true)}
+              title="View in AR"
+              aria-label="View in AR"
             >
-              View in AR
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 7V4h3M17 4h3v3M3 17v3h3M17 20h3v-3"/>
+                <path d="M12 8l-4 2.3v4.4L12 17l4-2.3V10.3z"/>
+                <line x1="12" y1="17" x2="12" y2="12.5"/>
+                <line x1="8" y1="10.3" x2="12" y2="12.5"/>
+                <line x1="16" y1="10.3" x2="12" y2="12.5"/>
+              </svg>
             </button>
           </div>
 
@@ -271,12 +278,14 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 aria-label="Show dimensions"
                 onClick={() => setDimOpen(true)}
               >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M6 8h12" />
-                  <path d="M6 16h12" />
-                  <path d="M8 6v12" />
-                  <path d="M16 6v12" />
-                  <path d="M4 12h16" />
+                <svg viewBox="0 0 28 10" aria-hidden="true" focusable="false">
+                  <rect x="0.8" y="0.8" width="26.4" height="8.4" rx="1" />
+                  <line x1="5.5"  y1="0.8" x2="5.5"  y2="5.8" />
+                  <line x1="9"    y1="0.8" x2="9"    y2="4" />
+                  <line x1="12.5" y1="0.8" x2="12.5" y2="5.8" />
+                  <line x1="16"   y1="0.8" x2="16"   y2="4" />
+                  <line x1="19.5" y1="0.8" x2="19.5" y2="5.8" />
+                  <line x1="23"   y1="0.8" x2="23"   y2="4" />
                 </svg>
               </button>
             )}
@@ -335,6 +344,16 @@ export default function App({ productId, variantId }: AppProps = {}) {
             }
 
             try {
+              // Capture 3D viewer screenshot
+              let imageBase64: string | undefined;
+              try {
+                const root = appLayoutRef.current?.closest('.chase-cover-configurator-root') || document;
+                const canvas = (root as Element).querySelector?.('canvas') ?? document.querySelector('.viewport canvas');
+                if (canvas && canvas instanceof HTMLCanvasElement) {
+                  imageBase64 = canvas.toDataURL('image/png', 0.85);
+                }
+              } catch { /* ignore capture errors */ }
+
               const payload = {
                 w: config.w, l: config.l, sk: config.sk,
                 drip: config.drip, diag: config.diag,
@@ -348,6 +367,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 notes: config.notes,
                 shopifyProductId: productId,
                 shopifyVariantId: variantId,
+                image: imageBase64,
               };
 
               const res = await fetch(`${apiBase}/api/create-order`, {
@@ -363,6 +383,8 @@ export default function App({ productId, variantId }: AppProps = {}) {
               }
 
               if (data?.checkout_url) {
+                // Save config so it can be restored if user presses back from cart
+                saveConfigForRestore();
                 window.location.href = data.checkout_url;
               } else {
                 throw new Error(data?.error || 'No checkout URL returned');

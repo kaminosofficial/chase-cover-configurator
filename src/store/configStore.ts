@@ -73,7 +73,7 @@ function computePrice(s: Partial<StoreData>): number {
   const subtotal = base
     + holes * PRICING.HOLE_PRICE
     + (sk >= PRICING.SKIRT_THRESHOLD ? PRICING.SKIRT_SURCHARGE : 0)
-    + (pc ? PRICING.POWDER_COAT : 0)
+    + (pc && mat !== 'copper' ? PRICING.POWDER_COAT : 0)
     + stormCollarCost;
   return subtotal * (PRICING.GAUGE_MULT[gauge] || 1) * (PRICING.MATERIAL_MULT[mat] || 1);
 }
@@ -98,21 +98,58 @@ const initial: StoreData = {
 };
 initial.price = computePrice(initial);
 
-export const useConfigStore = create<ConfigState>((set) => ({
-  ...initial,
-  set: (partial) => set(state => {
-    const next = { ...state, ...partial };
-    return { ...partial, price: computePrice(next) };
-  }),
-  setCollar: (id, partial) => set(state => {
-    const key = `collar${id}` as 'collarA' | 'collarB' | 'collarC';
-    const updated = { ...state[key], ...partial };
-    const next = { ...state, [key]: updated };
-    return { [key]: updated, price: computePrice(next) };
-  }),
-  setOrbitEnabled: (v: boolean) => set({ orbitEnabled: v }),
-  setMoveHolesMode: (v: boolean) => set({ moveHolesMode: v }),
-}));
+const RESTORE_KEY = 'chase-cover-restore';
+
+/** Save current config to sessionStorage before navigating to cart. */
+export function saveConfigForRestore() {
+  try {
+    const s = useConfigStore.getState();
+    const data = {
+      w: s.w, l: s.l, sk: s.sk,
+      drip: s.drip, diag: s.diag,
+      mat: s.mat, gauge: s.gauge,
+      pc: s.pc, pcCol: s.pcCol,
+      holes: s.holes,
+      collarA: s.collarA, collarB: s.collarB, collarC: s.collarC,
+      quantity: s.quantity, notes: s.notes,
+    };
+    sessionStorage.setItem(RESTORE_KEY, JSON.stringify(data));
+  } catch { /* ignore */ }
+}
+
+/** Restore config from sessionStorage (back-from-cart), then clear it.
+ *  Returns true if config was restored. */
+export function restoreConfigIfNeeded(): boolean {
+  try {
+    const raw = sessionStorage.getItem(RESTORE_KEY);
+    if (!raw) return false;
+    sessionStorage.removeItem(RESTORE_KEY);
+    const data = JSON.parse(raw);
+    useConfigStore.getState().set(data);
+    return true;
+  } catch {
+    sessionStorage.removeItem(RESTORE_KEY);
+    return false;
+  }
+}
+
+export const useConfigStore = create<ConfigState>()(
+  (set) => ({
+    ...initial,
+    set: (partial) => set(state => {
+      const next = { ...state, ...partial };
+      return { ...partial, price: computePrice(next) };
+    }),
+    setCollar: (id, partial) => set(state => {
+      const key = `collar${id}` as 'collarA' | 'collarB' | 'collarC';
+      const updated = { ...state[key], ...partial };
+      const next = { ...state, [key]: updated };
+      return { [key]: updated, price: computePrice(next) };
+    }),
+    setOrbitEnabled: (v: boolean) => set({ orbitEnabled: v }),
+    setMoveHolesMode: (v: boolean) => set({ moveHolesMode: v }),
+  })
+);
 
 onPricingLoaded(() => {
   const state = useConfigStore.getState();

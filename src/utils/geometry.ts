@@ -27,8 +27,9 @@ export function mkMat(
   pc: boolean,
   pcCol: string
 ): THREE.MeshStandardMaterial {
-  if (pc) return new THREE.MeshStandardMaterial({ color: pcCol, metalness: 0.3, roughness: 0.6 });
+  // Copper always renders as copper — its look is independent of powder coat state
   if (mat === 'copper') return new THREE.MeshStandardMaterial({ color: '#e09a72', metalness: 0.85, roughness: 0.15, envMapIntensity: 1.2 });
+  if (pc) return new THREE.MeshStandardMaterial({ color: pcCol, metalness: 0.3, roughness: 0.6 });
   return new THREE.MeshStandardMaterial({ color: '#b8c4cc', metalness: 0.9, roughness: 0.25 });
 }
 

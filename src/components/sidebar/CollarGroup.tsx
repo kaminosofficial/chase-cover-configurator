@@ -369,13 +369,14 @@ export function CollarGroup({ id, label }: Props) {
       const l = config.l;
       const halfX = hole.halfX / SC;
       const halfZ = hole.halfZ / SC;
-      const r8 = (value: number) => Math.max(0, Math.ceil(value * 8) / 8);
+      // Use exact values (no 1/8" rounding) so the visual position doesn't shift
+      const clamp0 = (v: number) => Math.max(0, v);
       setCollar(id, {
         centered: false,
-        offset1: r8(w / 2 - halfX - hole.wx / SC),
-        offset2: r8(l / 2 - halfZ - hole.wz / SC),
-        offset3: r8(hole.wx / SC + w / 2 - halfX),
-        offset4: r8(hole.wz / SC + l / 2 - halfZ),
+        offset1: clamp0(w / 2 - halfX - hole.wx / SC),
+        offset2: clamp0(l / 2 - halfZ - hole.wz / SC),
+        offset3: clamp0(hole.wx / SC + w / 2 - halfX),
+        offset4: clamp0(hole.wz / SC + l / 2 - halfZ),
       });
     } else {
       setCollar(id, { centered: true });

@@ -77,19 +77,19 @@ function DimInput({ configKey, label, unit, max, tooltip }: DimProps) {
 export function DimensionFields() {
   return (
     <div className="field-row-3">
-      <DimInput 
-        configKey="w" 
-        label="Width" 
-        unit="in" 
-        max={60} 
-        tooltip="Measure the outside width of your chase opening from edge to edge. Add ¼″ for proper fitment."
-      />
-      <DimInput 
-        configKey="l" 
-        label="Length" 
-        unit="in" 
-        max={120} 
+      <DimInput
+        configKey="l"
+        label="Length"
+        unit="in"
+        max={120}
         tooltip="Measure the outside length of your chase opening from edge to edge. Add ¼″ for proper fitment."
+      />
+      <DimInput
+        configKey="w"
+        label="Width"
+        unit="in"
+        max={60}
+        tooltip="Measure the outside width of your chase opening from edge to edge. Add ¼″ for proper fitment."
       />
       <DimInput 
         configKey="sk" 
