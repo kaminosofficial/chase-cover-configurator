@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchPricingFromPublicSheet, getStormCollarPrice } from '../lib/pricing-sheet.js';
+import { getHoleEdgeOffsets, holeWorld } from '../src/utils/geometry.js';
 
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE!;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN; // shpat_...
@@ -36,11 +37,42 @@ interface OrderConfig {
     collarA?: CollarConfig;
     collarB?: CollarConfig;
     collarC?: CollarConfig;
+    holeCutoutA?: string;
+    holeCutoutB?: string;
+    holeCutoutC?: string;
     quantity: number;
     notes: string;
     shopifyProductId?: string;
     shopifyVariantId?: string;
     image?: string; // base64 data URL of 3D viewer screenshot
+}
+
+function getHoleCutoutValue(id: 'A' | 'B' | 'C', config: OrderConfig): string {
+    const cachedValue = id === 'A'
+        ? config.holeCutoutA
+        : id === 'B'
+            ? config.holeCutoutB
+            : config.holeCutoutC;
+    if (cachedValue) return cachedValue;
+
+    const state = {
+        ...config,
+        showLabels: false,
+        showLabelsA: false,
+        showLabelsB: false,
+        showLabelsC: false,
+        price: 0,
+        orbitEnabled: true,
+        moveHolesMode: false,
+        setOrbitEnabled: () => undefined,
+        setMoveHolesMode: () => undefined,
+        set: () => undefined,
+        setCollar: () => undefined,
+    } as any;
+
+    const hole = holeWorld(id, state);
+    const offsets = getHoleEdgeOffsets(hole, state);
+    return `${id}1: ${formatFrac(offsets.top)}" | ${id}2: ${formatFrac(offsets.right)}" | ${id}3: ${formatFrac(offsets.bottom)}" | ${id}4: ${formatFrac(offsets.left)}"`;
 }
 
 // In-memory cache for the Shopify Admin API token
@@ -301,9 +333,9 @@ function getHolePositionLabel(index: number, total: number): string {
 function buildHoleProperties(config: OrderConfig): { name: string; value: string }[] {
     const props: { name: string; value: string }[] = [];
     const collars = [
-        { label: 'H1', data: config.collarA },
-        { label: 'H2', data: config.collarB },
-        { label: 'H3', data: config.collarC },
+        { label: 'H1', id: 'A' as const, data: config.collarA },
+        { label: 'H2', id: 'B' as const, data: config.collarB },
+        { label: 'H3', id: 'C' as const, data: config.collarC },
     ];
     for (let i = 0; i < config.holes; i++) {
         const c = collars[i];
@@ -322,14 +354,11 @@ function buildHoleProperties(config: OrderConfig): { name: string; value: string
         }
 
         // Position on one line
-        if (c.data.centered) {
-            props.push({ name: `${config.holes === 1 ? '' : c.label + ' '}Position`, value: 'Centered on cover' });
-        } else {
-            props.push({
-                name: `${config.holes === 1 ? '' : c.label + ' '}Offsets`,
-                value: `Top: ${formatFrac(c.data.offset3)}" · Right: ${formatFrac(c.data.offset4)}" · Bottom: ${formatFrac(c.data.offset1)}" · Left: ${formatFrac(c.data.offset2)}"`,
-            });
-        }
+        const cutoutOffsets = getHoleCutoutValue(c.id, config);
+        props.push({
+            name: `${config.holes === 1 ? '' : c.label + ' '}Position`,
+            value: c.data.centered ? `Centered on cover | ${cutoutOffsets}` : cutoutOffsets,
+        });
     }
     return props;
 }
@@ -342,9 +371,9 @@ function buildLineItemDescription(config: OrderConfig): string {
     if (config.pc) lines.push(`Powder Coat: ${getColorName(config.pcCol)} (${config.pcCol})`);
 
     const collars = [
-        { label: 'H1', data: config.collarA },
-        { label: 'H2', data: config.collarB },
-        { label: 'H3', data: config.collarC },
+        { label: 'H1', id: 'A' as const, data: config.collarA },
+        { label: 'H2', id: 'B' as const, data: config.collarB },
+        { label: 'H3', id: 'C' as const, data: config.collarC },
     ];
     for (let i = 0; i < config.holes; i++) {
         const c = collars[i];
@@ -363,6 +392,7 @@ function buildLineItemDescription(config: OrderConfig): string {
         } else {
             desc += ` [Top:${formatFrac(c.data.offset3)}" Right:${formatFrac(c.data.offset4)}" Bottom:${formatFrac(c.data.offset1)}" Left:${formatFrac(c.data.offset2)}"]`;
         }
+        desc += ` [${getHoleCutoutValue(c.id, config)}]`;
         lines.push(desc);
     }
 
@@ -384,16 +414,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(400).json({ error: 'Missing required configuration fields' });
         }
 
-        // 1. Get Shopify Token dynamically
-        console.log('[DEBUG] Fetching Shopify token...');
-        const shopifyAccessToken = await getShopifyAccessToken();
-        console.log('[DEBUG] Shopify token obtained.');
+        // 1. Fetch Shopify auth and pricing in parallel
+        console.log('[DEBUG] Fetching Shopify token and pricing...');
+        const [shopifyAccessToken, pricing] = await Promise.all([
+            getShopifyAccessToken(),
+            fetchPricingFromSheet(),
+        ]);
+        console.log('[DEBUG] Shopify token and pricing fetched.');
 
         // 2. Fetch pricing from Google Sheet (server-side — tamper-proof)
-        console.log('[DEBUG] Fetching pricing from sheet...');
-        const pricing = await fetchPricingFromSheet();
-        console.log('[DEBUG] Pricing fetched.');
-
         // 3. Calculate price server-side
         const unitPrice = computePrice(config, pricing);
         console.log('[DEBUG] Calculated unitPrice:', unitPrice);
@@ -406,7 +435,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let previewImageUrl: string | undefined;
         if (config.image) {
             console.log('[DEBUG] Uploading preview image...');
-            previewImageUrl = await uploadImageToShopify(config.image, shopifyAccessToken);
+            previewImageUrl = await Promise.race<string | undefined>([
+                uploadImageToShopify(config.image, shopifyAccessToken),
+                wait(2000).then(() => undefined),
+            ]);
             console.log('[DEBUG] Preview image URL:', previewImageUrl || '(upload failed, continuing without image)');
         }
 

@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useConfigStore } from '../../store/configStore';
 
-interface Props { onAddToCart: () => void; }
+interface Props {
+  onAddToCart: () => void;
+  isSubmitting?: boolean;
+}
 
 const MAX_QTY = 10;
 
-export function CartRow({ onAddToCart }: Props) {
+export function CartRow({ onAddToCart, isSubmitting = false }: Props) {
   const quantity = useConfigStore(s => s.quantity);
   const set = useConfigStore(s => s.set);
   const [quantityText, setQuantityText] = useState(String(quantity));
@@ -47,8 +50,21 @@ export function CartRow({ onAddToCart }: Props) {
             style={{ width: '52px' }}
           />
         </div>
-        <button className="add-to-cart" onClick={onAddToCart} style={{ flex: 1 }}>
-          Add to Cart
+        <button
+          className="add-to-cart"
+          onClick={onAddToCart}
+          disabled={isSubmitting}
+          aria-busy={isSubmitting}
+          style={{ flex: 1 }}
+        >
+          {isSubmitting ? (
+            <span className="add-to-cart-content">
+              <span className="add-to-cart-spinner" aria-hidden="true" />
+              Processing...
+            </span>
+          ) : (
+            'Add to Cart'
+          )}
         </button>
       </div>
     </>

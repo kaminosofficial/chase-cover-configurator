@@ -8,7 +8,7 @@ import { applyConfigState, getConfigState, exportToGLB } from './utils/ar';
 import { cameraActions } from './utils/cameraRef';
 import { RalModal } from './components/ral/RalModal';
 import { formatFrac } from './utils/format';
-import { getHoleSizeInches } from './utils/geometry';
+import { getHoleSizeInches, getHoleEdgeOffsets, holeWorld } from './utils/geometry';
 
 declare global {
   interface Window { QRious: any; }
@@ -33,6 +33,12 @@ function formatHoleSummary(code: 'A' | 'B' | 'C', index: number, collar: CollarS
   return holeText + offsetText;
 }
 
+function formatHoleCutoutSummary(code: 'A' | 'B' | 'C', config: ReturnType<typeof useConfigStore.getState>) {
+  const hole = holeWorld(code, config);
+  const offsets = getHoleEdgeOffsets(hole, config);
+  return `[${code}1: ${formatFrac(offsets.top)}" ${code}2: ${formatFrac(offsets.right)}" ${code}3: ${formatFrac(offsets.bottom)}" ${code}4: ${formatFrac(offsets.left)}"]`;
+}
+
 export default function App({ productId, variantId }: AppProps = {}) {
   const config = useConfigStore(s => s);
   const setConfig = useConfigStore(s => s.set);
@@ -45,6 +51,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const [bdOpen, setBdOpen] = useState(false);
   const [ralOpen, setRalOpen] = useState(false);
   const [dimOpen, setDimOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const arViewerRef = useRef<any>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -336,7 +343,9 @@ export default function App({ productId, variantId }: AppProps = {}) {
           bdOpen={bdOpen}
           setBdOpen={setBdOpen}
           onOpenRal={() => setRalOpen(true)}
+          isSubmitting={isSubmitting}
           onAddToCart={async () => {
+            if (isSubmitting) return;
             const apiBase = (window as any).__chaseApiBase || '';
             if (!apiBase) {
               alert('Configuration error: API base not found. Are you running this via the Shopify integration?');
@@ -344,6 +353,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
             }
 
             try {
+              setIsSubmitting(true);
               // Capture 3D viewer screenshot
               let imageBase64: string | undefined;
               try {
@@ -363,6 +373,9 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 collarA: config.holes >= 1 ? config.collarA : undefined,
                 collarB: config.holes >= 2 ? config.collarB : undefined,
                 collarC: config.holes >= 3 ? config.collarC : undefined,
+                holeCutoutA: config.holes >= 1 ? formatHoleCutoutSummary('A', config) : undefined,
+                holeCutoutB: config.holes >= 2 ? formatHoleCutoutSummary('B', config) : undefined,
+                holeCutoutC: config.holes >= 3 ? formatHoleCutoutSummary('C', config) : undefined,
                 quantity: config.quantity,
                 notes: config.notes,
                 shopifyProductId: productId,
@@ -392,6 +405,8 @@ export default function App({ productId, variantId }: AppProps = {}) {
             } catch (err: any) {
               console.error('Add to cart error:', err);
               alert(`Failed to create order: ${err.message}`);
+            } finally {
+              setIsSubmitting(false);
             }
           }}
         />

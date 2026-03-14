@@ -235,6 +235,7 @@ function HoleComponent({ id, config, activeId, setActiveId, mat }: { id: 'A'|'B'
 }
 
 export function ChaseModel() {
+    const rootRef = useRef<THREE.Group>(null);
     const groupRef = useRef<THREE.Group>(null);
     const [activeId, setActiveId] = useState<string | null>(null);
 
@@ -245,13 +246,13 @@ export function ChaseModel() {
 
     useFrame(() => {
         const elapsed = (performance.now() - mountTime) / 1000;
-        if (elapsed < 3 && groupRef.current) {
+        if (elapsed < 3 && rootRef.current) {
             // Slower, subtler wobble animation for the first 3 seconds
             const progress = elapsed / 3;
             const amplitude = 0.08 * (1 - progress); 
-            groupRef.current.rotation.y = Math.sin(elapsed * Math.PI * 1.5) * amplitude;
-        } else if (groupRef.current && groupRef.current.rotation.y !== 0) {
-            groupRef.current.rotation.y = 0; // snap back exactly
+            rootRef.current.rotation.y = Math.sin(elapsed * Math.PI * 1.5) * amplitude;
+        } else if (rootRef.current && rootRef.current.rotation.y !== 0) {
+            rootRef.current.rotation.y = 0; // snap back exactly
         }
     });
 
@@ -292,6 +293,7 @@ export function ChaseModel() {
     return (
         <group
             ref={(node) => {
+                rootRef.current = node;
                 if (node) (window as any).__chaseGroup = node;
             }}
         >
