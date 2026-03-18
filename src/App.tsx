@@ -36,7 +36,7 @@ function formatHoleSummary(code: 'A' | 'B' | 'C', index: number, collar: CollarS
 function formatHoleCutoutSummary(code: 'A' | 'B' | 'C', config: ReturnType<typeof useConfigStore.getState>) {
   const hole = holeWorld(code, config);
   const offsets = getHoleEdgeOffsets(hole, config);
-  return `[${code}1: ${formatFrac(offsets.top)}" ${code}2: ${formatFrac(offsets.right)}" ${code}3: ${formatFrac(offsets.bottom)}" ${code}4: ${formatFrac(offsets.left)}"]`;
+  return `[${code}1(Top): ${formatFrac(offsets.top)}\" ${code}2(Right): ${formatFrac(offsets.right)}\" ${code}3(Bottom): ${formatFrac(offsets.bottom)}\" ${code}4(Left): ${formatFrac(offsets.left)}\"]`;
 }
 
 export default function App({ productId, variantId }: AppProps = {}) {

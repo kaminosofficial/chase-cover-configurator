@@ -72,7 +72,7 @@ function getHoleCutoutValue(id: 'A' | 'B' | 'C', config: OrderConfig): string {
 
     const hole = holeWorld(id, state);
     const offsets = getHoleEdgeOffsets(hole, state);
-    return `${id}1: ${formatFrac(offsets.top)}" | ${id}2: ${formatFrac(offsets.right)}" | ${id}3: ${formatFrac(offsets.bottom)}" | ${id}4: ${formatFrac(offsets.left)}"`;
+    return `${id}1(Top): ${formatFrac(offsets.top)}\" | ${id}2(Right): ${formatFrac(offsets.right)}\" | ${id}3(Bottom): ${formatFrac(offsets.bottom)}\" | ${id}4(Left): ${formatFrac(offsets.left)}\"`;
 }
 
 // In-memory cache for the Shopify Admin API token
