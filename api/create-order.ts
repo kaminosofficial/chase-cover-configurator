@@ -261,6 +261,76 @@ async function uploadImageToShopify(base64DataUrl: string, accessToken: string):
     }
 }
 
+/**
+ * Update the Shopify product's image so the draft order checkout shows the 3D preview.
+ * Creates a new product image from the base64 data, then removes any old images.
+ * Returns the new image URL or undefined on failure.
+ */
+async function updateProductImage(productId: string, base64DataUrl: string, accessToken: string): Promise<string | undefined> {
+    try {
+        const match = base64DataUrl.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/);
+        if (!match) return undefined;
+        const base64Data = match[2];
+        const ext = match[1];
+
+        // Create new product image directly from base64
+        const createRes = await fetch(
+            `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images.json`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Shopify-Access-Token': accessToken,
+                },
+                body: JSON.stringify({
+                    image: {
+                        attachment: base64Data,
+                        filename: `chase-cover-${Date.now()}.${ext}`,
+                    },
+                }),
+            }
+        );
+
+        if (!createRes.ok) {
+            const errorText = await createRes.text();
+            console.log('[IMAGE] Product image create failed:', createRes.status, errorText);
+            return undefined;
+        }
+
+        const createData = await createRes.json();
+        const newImageId = createData?.image?.id;
+        const imageUrl = createData?.image?.src;
+        console.log('[IMAGE] Product image created:', imageUrl ? 'success' : 'no url');
+
+        // Clean up old images to prevent accumulation (non-blocking, fire-and-forget)
+        if (newImageId) {
+            (async () => {
+                try {
+                    const listRes = await fetch(
+                        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images.json`,
+                        { headers: { 'X-Shopify-Access-Token': accessToken } }
+                    );
+                    if (listRes.ok) {
+                        const listData = await listRes.json();
+                        const oldImages = (listData?.images || []).filter((img: any) => img.id !== newImageId);
+                        for (const img of oldImages) {
+                            fetch(
+                                `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images/${img.id}.json`,
+                                { method: 'DELETE', headers: { 'X-Shopify-Access-Token': accessToken } }
+                            ).catch(() => {});
+                        }
+                    }
+                } catch { /* ignore cleanup errors */ }
+            })();
+        }
+
+        return imageUrl;
+    } catch (err: any) {
+        console.log('[IMAGE] Product image update error (non-fatal):', err.message);
+        return undefined;
+    }
+}
+
 async function fetchPricingFromSheet() {
     return fetchPricingFromPublicSheet(GOOGLE_SHEET_ID, 'pricing');
 }
@@ -435,10 +505,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let previewImageUrl: string | undefined;
         if (config.image) {
             console.log('[DEBUG] Uploading preview image...');
-            previewImageUrl = await Promise.race<string | undefined>([
-                uploadImageToShopify(config.image, shopifyAccessToken),
-                wait(2000).then(() => undefined),
-            ]);
+
+            // Try updating the product image first (so checkout shows the thumbnail)
+            if (config.shopifyProductId) {
+                previewImageUrl = await Promise.race<string | undefined>([
+                    updateProductImage(String(config.shopifyProductId), config.image, shopifyAccessToken),
+                    wait(8000).then(() => undefined),
+                ]);
+                console.log('[DEBUG] Product image update:', previewImageUrl ? 'success' : '(failed, trying file upload fallback)');
+            }
+
+            // Fallback to staged file upload if product image update failed or no product ID
+            if (!previewImageUrl) {
+                previewImageUrl = await Promise.race<string | undefined>([
+                    uploadImageToShopify(config.image, shopifyAccessToken),
+                    wait(2000).then(() => undefined),
+                ]);
+            }
+
             console.log('[DEBUG] Preview image URL:', previewImageUrl || '(upload failed, continuing without image)');
         }
 
