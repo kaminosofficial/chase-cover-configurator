@@ -368,29 +368,75 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             fetchPricingFromSheet(),
         ]);
 
-        // If variantId is missing, fetch the first variant from the product
-        if (!config.shopifyVariantId && config.shopifyProductId) {
-            console.log('[CART] No variantId provided, fetching from product', config.shopifyProductId);
-            try {
-                const prodRes = await fetch(
-                    `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${config.shopifyProductId}.json?fields=id,variants`,
-                    { headers: { 'X-Shopify-Access-Token': accessToken } }
-                );
-                if (prodRes.ok) {
-                    const prodData = await prodRes.json();
-                    const firstVariant = prodData?.product?.variants?.[0];
-                    if (firstVariant?.id) {
-                        config.shopifyVariantId = String(firstVariant.id);
-                        console.log('[CART] Resolved variantId:', config.shopifyVariantId);
+        console.log('[CART] Auth OK, store:', SHOPIFY_STORE);
+        console.log('[CART] productId:', config.shopifyProductId || '(none)', 'variantId:', config.shopifyVariantId || '(none)');
+
+        // If variantId is missing, try to resolve it
+        if (!config.shopifyVariantId) {
+            // Attempt 1: Fetch from specific product
+            if (config.shopifyProductId) {
+                console.log('[CART] Attempt 1: Fetching variants for product', config.shopifyProductId);
+                try {
+                    const prodRes = await fetch(
+                        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${config.shopifyProductId}.json?fields=id,variants`,
+                        { headers: { 'X-Shopify-Access-Token': accessToken } }
+                    );
+                    console.log('[CART] Product fetch status:', prodRes.status);
+                    if (prodRes.ok) {
+                        const prodData = await prodRes.json();
+                        const firstVariant = prodData?.product?.variants?.[0];
+                        if (firstVariant?.id) {
+                            config.shopifyVariantId = String(firstVariant.id);
+                            console.log('[CART] Resolved variantId from product:', config.shopifyVariantId);
+                        }
+                    } else {
+                        const errText = await prodRes.text();
+                        console.error('[CART] Product fetch failed:', prodRes.status, errText);
                     }
+                } catch (err: any) {
+                    console.error('[CART] Product fetch error:', err.message);
                 }
-            } catch (err: any) {
-                console.error('[CART] Failed to fetch product variants:', err.message);
+            }
+
+            // Attempt 2: List all products and use the first one with "chase" in the title
+            if (!config.shopifyVariantId) {
+                console.log('[CART] Attempt 2: Listing products to find chase cover...');
+                try {
+                    const listRes = await fetch(
+                        `https://${SHOPIFY_STORE}/admin/api/2025-10/products.json?limit=50&fields=id,title,variants`,
+                        { headers: { 'X-Shopify-Access-Token': accessToken } }
+                    );
+                    console.log('[CART] Products list status:', listRes.status);
+                    if (listRes.ok) {
+                        const listData = await listRes.json();
+                        const products = listData?.products || [];
+                        console.log('[CART] Found', products.length, 'products');
+
+                        // Try to find a product with "chase" in the title, otherwise use the first one
+                        const chaseProduct = products.find((p: any) =>
+                            p.title?.toLowerCase().includes('chase')
+                        ) || products[0];
+
+                        if (chaseProduct?.variants?.[0]?.id) {
+                            config.shopifyProductId = String(chaseProduct.id);
+                            config.shopifyVariantId = String(chaseProduct.variants[0].id);
+                            console.log('[CART] Resolved from product list:', chaseProduct.title, '→ productId:', config.shopifyProductId, 'variantId:', config.shopifyVariantId);
+                        }
+                    } else {
+                        const errText = await listRes.text();
+                        console.error('[CART] Products list failed:', listRes.status, errText);
+                    }
+                } catch (err: any) {
+                    console.error('[CART] Products list error:', err.message);
+                }
             }
         }
 
         if (!config.shopifyVariantId) {
-            return res.status(400).json({ error: 'Missing shopifyVariantId — cannot add to native cart without a variant. Provide variant-id or product-id in the HTML element.' });
+            return res.status(400).json({
+                error: 'Could not resolve a Shopify variant. Check that: (1) SHOPIFY_PRODUCT_ID env var is set in Vercel, (2) the Shopify app has read_products scope, (3) the product exists.',
+                debug: { shopifyProductId: config.shopifyProductId || null, envProductId: SHOPIFY_PRODUCT_ID || null, store: SHOPIFY_STORE },
+            });
         }
 
         // 2. Calculate price server-side
