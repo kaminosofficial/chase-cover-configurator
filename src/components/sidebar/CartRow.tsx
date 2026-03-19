@@ -3,12 +3,14 @@ import { useConfigStore } from '../../store/configStore';
 
 interface Props {
   onAddToCart: () => void;
+  onBuyNow: () => void;
   isSubmitting?: boolean;
+  submittingAction?: 'cart' | 'buy' | null;
 }
 
 const MAX_QTY = 10;
 
-export function CartRow({ onAddToCart, isSubmitting = false }: Props) {
+export function CartRow({ onAddToCart, onBuyNow, isSubmitting = false, submittingAction = null }: Props) {
   const quantity = useConfigStore(s => s.quantity);
   const set = useConfigStore(s => s.set);
   const [quantityText, setQuantityText] = useState(String(quantity));
@@ -54,16 +56,32 @@ export function CartRow({ onAddToCart, isSubmitting = false }: Props) {
           className="add-to-cart"
           onClick={onAddToCart}
           disabled={isSubmitting}
-          aria-busy={isSubmitting}
+          aria-busy={isSubmitting && submittingAction === 'cart'}
           style={{ flex: 1 }}
         >
-          {isSubmitting ? (
+          {isSubmitting && submittingAction === 'cart' ? (
+            <span className="add-to-cart-content">
+              <span className="add-to-cart-spinner" aria-hidden="true" />
+              Adding...
+            </span>
+          ) : (
+            'Add to Cart'
+          )}
+        </button>
+        <button
+          className="buy-now-btn"
+          onClick={onBuyNow}
+          disabled={isSubmitting}
+          aria-busy={isSubmitting && submittingAction === 'buy'}
+          style={{ flex: 1 }}
+        >
+          {isSubmitting && submittingAction === 'buy' ? (
             <span className="add-to-cart-content">
               <span className="add-to-cart-spinner" aria-hidden="true" />
               Processing...
             </span>
           ) : (
-            'Add to Cart'
+            'Buy Now'
           )}
         </button>
       </div>

@@ -52,6 +52,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const [ralOpen, setRalOpen] = useState(false);
   const [dimOpen, setDimOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittingAction, setSubmittingAction] = useState<'cart' | 'buy' | null>(null);
 
   const arViewerRef = useRef<any>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -344,6 +345,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
           setBdOpen={setBdOpen}
           onOpenRal={() => setRalOpen(true)}
           isSubmitting={isSubmitting}
+          submittingAction={submittingAction}
           onAddToCart={async () => {
             if (isSubmitting) return;
             const apiBase = (window as any).__chaseApiBase || '';
@@ -354,6 +356,107 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
             try {
               setIsSubmitting(true);
+              setSubmittingAction('cart');
+
+              // Capture 3D viewer screenshot
+              let imageBase64: string | undefined;
+              try {
+                const root = appLayoutRef.current?.closest('.chase-cover-configurator-root') || document;
+                const canvas = (root as Element).querySelector?.('canvas') ?? document.querySelector('.viewport canvas');
+                if (canvas && canvas instanceof HTMLCanvasElement) {
+                  imageBase64 = canvas.toDataURL('image/png', 0.85);
+                }
+              } catch { /* ignore capture errors */ }
+
+              const payload = {
+                w: config.w, l: config.l, sk: config.sk,
+                drip: config.drip, diag: config.diag,
+                mat: config.mat, gauge: config.gauge,
+                pc: config.pc, pcCol: config.pcCol,
+                holes: config.holes,
+                collarA: config.holes >= 1 ? config.collarA : undefined,
+                collarB: config.holes >= 2 ? config.collarB : undefined,
+                collarC: config.holes >= 3 ? config.collarC : undefined,
+                holeCutoutA: config.holes >= 1 ? formatHoleCutoutSummary('A', config) : undefined,
+                holeCutoutB: config.holes >= 2 ? formatHoleCutoutSummary('B', config) : undefined,
+                holeCutoutC: config.holes >= 3 ? formatHoleCutoutSummary('C', config) : undefined,
+                quantity: config.quantity,
+                notes: config.notes,
+                shopifyProductId: productId,
+                shopifyVariantId: variantId,
+                image: imageBase64,
+              };
+
+              // Step 1: Call our API to calculate price + update variant
+              const res = await fetch(`${apiBase}/api/add-to-cart`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+              });
+
+              const data = await res.json().catch(() => null);
+              if (!res.ok) {
+                console.error('Add-to-cart API error:', res.status, data);
+                throw new Error(data?.error || `HTTP error! status: ${res.status}`);
+              }
+
+              // Step 2: Add to Shopify's native cart via AJAX Cart API
+              const cartProperties: Record<string, string> = {};
+              for (const prop of (data.properties || [])) {
+                cartProperties[prop.key] = prop.value;
+              }
+
+              const cartRes = await fetch('/cart/add.js', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  items: [{
+                    id: Number(data.variantId),
+                    quantity: data.quantity,
+                    properties: cartProperties,
+                  }],
+                }),
+              });
+
+              if (!cartRes.ok) {
+                const cartError = await cartRes.text();
+                console.error('Shopify cart add error:', cartRes.status, cartError);
+                throw new Error('Failed to add item to cart');
+              }
+
+              // Step 3: Open the cart drawer / refresh cart UI
+              // Try common Shopify theme methods to open the cart drawer
+              try {
+                // Dawn and many themes listen for this event
+                document.documentElement.dispatchEvent(new CustomEvent('cart:refresh'));
+                // Also try triggering a click on the cart icon to open the drawer
+                const cartIcon = document.querySelector('[data-cart-toggle], .cart-icon-bubble, .js-drawer-open-cart, a[href="/cart"], .header__icon--cart button, .site-header__cart') as HTMLElement | null;
+                if (cartIcon) cartIcon.click();
+              } catch { /* ignore */ }
+
+              // Show a brief success feedback
+              alert('Added to cart!');
+
+            } catch (err: any) {
+              console.error('Add to cart error:', err);
+              alert(`Failed to add to cart: ${err.message}`);
+            } finally {
+              setIsSubmitting(false);
+              setSubmittingAction(null);
+            }
+          }}
+          onBuyNow={async () => {
+            if (isSubmitting) return;
+            const apiBase = (window as any).__chaseApiBase || '';
+            if (!apiBase) {
+              alert('Configuration error: API base not found. Are you running this via the Shopify integration?');
+              return;
+            }
+
+            try {
+              setIsSubmitting(true);
+              setSubmittingAction('buy');
+
               // Capture 3D viewer screenshot
               let imageBase64: string | undefined;
               try {
@@ -396,17 +499,17 @@ export default function App({ productId, variantId }: AppProps = {}) {
               }
 
               if (data?.checkout_url) {
-                // Save config so it can be restored if user presses back from cart
                 saveConfigForRestore();
                 window.location.href = data.checkout_url;
               } else {
                 throw new Error(data?.error || 'No checkout URL returned');
               }
             } catch (err: any) {
-              console.error('Add to cart error:', err);
+              console.error('Buy now error:', err);
               alert(`Failed to create order: ${err.message}`);
             } finally {
               setIsSubmitting(false);
+              setSubmittingAction(null);
             }
           }}
         />

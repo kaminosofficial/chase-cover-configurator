@@ -20,12 +20,14 @@ interface SidebarProps {
   setBdOpen: (v: boolean) => void;
   onOpenRal: () => void;
   onAddToCart: () => void;
+  onBuyNow: () => void;
   isSubmitting?: boolean;
+  submittingAction?: 'cart' | 'buy' | null;
 }
 
 function fmt(n: number) { return '$' + n.toFixed(2); }
 
-export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOpenRal, onAddToCart, isSubmitting = false }: SidebarProps) {
+export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOpenRal, onAddToCart, onBuyNow, isSubmitting = false, submittingAction = null }: SidebarProps) {
   const config = useConfigStore(s => s);
   const holes = config.holes;
   const pc = config.pc;
@@ -190,7 +192,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
             </div>
           ))}
         </div>
-        <CartRow onAddToCart={onAddToCart} isSubmitting={isSubmitting} />
+        <CartRow onAddToCart={onAddToCart} onBuyNow={onBuyNow} isSubmitting={isSubmitting} submittingAction={submittingAction} />
       </div>
     </div>
   );
