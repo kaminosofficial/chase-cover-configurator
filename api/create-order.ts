@@ -2,11 +2,11 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchPricingFromPublicSheet, getStormCollarPrice } from '../lib/pricing-sheet.js';
 import { getHoleEdgeOffsets, holeWorld } from '../src/utils/geometry.js';
 
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE!;
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN; // shpat_...
-const SHOPIFY_CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;
-const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID!;
+const SHOPIFY_STORE = (process.env.SHOPIFY_STORE || '').trim();
+const SHOPIFY_ACCESS_TOKEN = (process.env.SHOPIFY_ACCESS_TOKEN || '').trim() || undefined;
+const SHOPIFY_CLIENT_ID = (process.env.SHOPIFY_CLIENT_ID || '').trim() || undefined;
+const SHOPIFY_CLIENT_SECRET = (process.env.SHOPIFY_CLIENT_SECRET || '').trim() || undefined;
+const GOOGLE_SHEET_ID = (process.env.GOOGLE_SHEET_ID || '').trim();
 const SHOPIFY_TOKEN_URL = `https://${SHOPIFY_STORE}/admin/oauth/access_token`;
 
 interface CollarConfig {
