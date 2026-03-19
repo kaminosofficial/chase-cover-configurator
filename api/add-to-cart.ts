@@ -354,15 +354,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!config.w || !config.l || !config.sk || !config.mat || !config.gauge) {
             return res.status(400).json({ error: 'Missing required configuration fields' });
         }
-        if (!config.shopifyVariantId) {
-            return res.status(400).json({ error: 'Missing shopifyVariantId — cannot add to native cart without a variant' });
-        }
 
         // 1. Auth + pricing in parallel
         const [accessToken, pricing] = await Promise.all([
             getShopifyAccessToken(),
             fetchPricingFromSheet(),
         ]);
+
+        // If variantId is missing, fetch the first variant from the product
+        if (!config.shopifyVariantId && config.shopifyProductId) {
+            console.log('[CART] No variantId provided, fetching from product', config.shopifyProductId);
+            try {
+                const prodRes = await fetch(
+                    `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${config.shopifyProductId}.json?fields=id,variants`,
+                    { headers: { 'X-Shopify-Access-Token': accessToken } }
+                );
+                if (prodRes.ok) {
+                    const prodData = await prodRes.json();
+                    const firstVariant = prodData?.product?.variants?.[0];
+                    if (firstVariant?.id) {
+                        config.shopifyVariantId = String(firstVariant.id);
+                        console.log('[CART] Resolved variantId:', config.shopifyVariantId);
+                    }
+                }
+            } catch (err: any) {
+                console.error('[CART] Failed to fetch product variants:', err.message);
+            }
+        }
+
+        if (!config.shopifyVariantId) {
+            return res.status(400).json({ error: 'Missing shopifyVariantId — cannot add to native cart without a variant. Provide variant-id or product-id in the HTML element.' });
+        }
 
         // 2. Calculate price server-side
         const unitPrice = computePrice(config, pricing);
