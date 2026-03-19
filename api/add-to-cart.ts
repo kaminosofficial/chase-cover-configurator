@@ -7,6 +7,7 @@ const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const SHOPIFY_CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;
 const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID!;
+const SHOPIFY_PRODUCT_ID = process.env.SHOPIFY_PRODUCT_ID; // fallback product ID
 const SHOPIFY_TOKEN_URL = `https://${SHOPIFY_STORE}/admin/oauth/access_token`;
 
 /* ------------------------------------------------------------------ */
@@ -348,7 +349,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         const config: OrderConfig = req.body;
-        console.log('[CART] Add-to-cart request received');
+        console.log('[CART] Add-to-cart request received, productId:', config.shopifyProductId, 'variantId:', config.shopifyVariantId);
+
+        // Use env var fallback for product ID if frontend didn't pass one
+        if (!config.shopifyProductId && SHOPIFY_PRODUCT_ID) {
+            config.shopifyProductId = SHOPIFY_PRODUCT_ID;
+            console.log('[CART] Using env var SHOPIFY_PRODUCT_ID:', SHOPIFY_PRODUCT_ID);
+        }
 
         // Validate
         if (!config.w || !config.l || !config.sk || !config.mat || !config.gauge) {
