@@ -293,9 +293,11 @@ async function createVariant(
         const inventoryItemId = parsed?.variant?.inventory_item_id;
         if (newVariantId) {
             const vid = String(newVariantId);
-            console.log('[CART] Variant created:', { variantId: vid, price, optionValue, inventoryItemId });
+            const createdPolicy = parsed?.variant?.inventory_policy;
+            const createdMgmt = parsed?.variant?.inventory_management;
+            console.log('[CART] Variant created:', { variantId: vid, price, optionValue, inventoryItemId, createdPolicy, createdMgmt });
 
-            // Ensure variant allows overselling (belt-and-suspenders: re-apply after creation)
+            // Step A: Update variant to ensure inventory_policy=continue
             try {
                 const updateRes = await fetch(
                     `https://${SHOPIFY_STORE}/admin/api/2025-10/variants/${vid}.json`,
@@ -306,17 +308,22 @@ async function createVariant(
                             'X-Shopify-Access-Token': accessToken,
                         },
                         body: JSON.stringify({
-                            variant: { id: Number(vid), inventory_policy: 'continue', inventory_management: null },
+                            variant: { id: Number(vid), inventory_policy: 'continue' },
                         }),
                     }
                 );
-                const updateText = await updateRes.text();
-                console.log('[CART] Variant update (inventory_policy=continue):', updateRes.ok ? 'success' : `${updateRes.status} ${updateText.slice(0, 200)}`);
+                const updateData = await updateRes.json().catch(() => null);
+                console.log('[CART] Step A - variant PUT:', {
+                    ok: updateRes.ok,
+                    status: updateRes.status,
+                    resultPolicy: updateData?.variant?.inventory_policy,
+                    resultMgmt: updateData?.variant?.inventory_management,
+                });
             } catch (err: any) {
-                console.warn('[CART] Failed to update variant inventory_policy:', err.message);
+                console.warn('[CART] Step A failed:', err.message);
             }
 
-            // Also try to disable tracking on the inventory item (needs write_inventory scope)
+            // Step B: Try to disable inventory tracking (needs write_inventory scope)
             if (inventoryItemId) {
                 try {
                     const invRes = await fetch(
@@ -330,11 +337,70 @@ async function createVariant(
                             body: JSON.stringify({ inventory_item: { tracked: false } }),
                         }
                     );
-                    const invText = await invRes.text();
-                    console.log('[CART] Inventory item tracked=false:', invRes.ok ? 'success' : `${invRes.status} ${invText.slice(0, 200)}`);
+                    const invData = await invRes.json().catch(() => null);
+                    console.log('[CART] Step B - inventory item:', {
+                        ok: invRes.ok,
+                        status: invRes.status,
+                        tracked: invData?.inventory_item?.tracked,
+                    });
                 } catch (err: any) {
-                    console.warn('[CART] Failed to disable inventory tracking:', err.message);
+                    console.warn('[CART] Step B failed:', err.message);
                 }
+            }
+
+            // Step C: Try to set inventory level to high number at first location
+            if (inventoryItemId) {
+                try {
+                    // Get first location
+                    const locRes = await fetch(
+                        `https://${SHOPIFY_STORE}/admin/api/2025-10/locations.json?limit=1`,
+                        { headers: { 'X-Shopify-Access-Token': accessToken } }
+                    );
+                    const locData = await locRes.json().catch(() => null);
+                    const locationId = locData?.locations?.[0]?.id;
+                    if (locationId) {
+                        const setRes = await fetch(
+                            `https://${SHOPIFY_STORE}/admin/api/2025-10/inventory_levels/set.json`,
+                            {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-Shopify-Access-Token': accessToken,
+                                },
+                                body: JSON.stringify({
+                                    location_id: locationId,
+                                    inventory_item_id: inventoryItemId,
+                                    available: 9999,
+                                }),
+                            }
+                        );
+                        const setData = await setRes.json().catch(() => null);
+                        console.log('[CART] Step C - inventory level set:', {
+                            ok: setRes.ok,
+                            status: setRes.status,
+                            available: setData?.inventory_level?.available,
+                            locationId,
+                        });
+                    }
+                } catch (err: any) {
+                    console.warn('[CART] Step C failed:', err.message);
+                }
+            }
+
+            // Step D: Verify the final state of the variant
+            try {
+                const verifyRes = await fetch(
+                    `https://${SHOPIFY_STORE}/admin/api/2025-10/variants/${vid}.json`,
+                    { headers: { 'X-Shopify-Access-Token': accessToken } }
+                );
+                const verifyData = await verifyRes.json().catch(() => null);
+                console.log('[CART] Step D - verification:', {
+                    inventory_policy: verifyData?.variant?.inventory_policy,
+                    inventory_management: verifyData?.variant?.inventory_management,
+                    inventory_quantity: verifyData?.variant?.inventory_quantity,
+                });
+            } catch (err: any) {
+                console.warn('[CART] Step D failed:', err.message);
             }
 
             return { ok: true, variantId: vid };
