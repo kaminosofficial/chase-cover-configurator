@@ -562,25 +562,45 @@ export default function App({ productId, variantId }: AppProps = {}) {
               }
 
               // Step 2: Add to Shopify's native cart via AJAX Cart API
+              // Retry with backoff because newly created variants may take a moment
+              // to propagate to Shopify's storefront API.
               const cartProperties: Record<string, string> = {};
               for (const prop of (data.properties || [])) {
                 cartProperties[prop.key] = prop.value;
               }
 
-              const cartRes = await fetch('/cart/add.js', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  items: [{
-                    id: Number(data.variantId),
-                    quantity: data.quantity,
-                    properties: cartProperties,
-                  }],
-                }),
+              const cartPayload = JSON.stringify({
+                items: [{
+                  id: Number(data.variantId),
+                  quantity: data.quantity,
+                  properties: cartProperties,
+                }],
               });
 
-              if (!cartRes.ok) {
-                const cartErrorText = await cartRes.text();
+              let cartRes: Response | null = null;
+              let cartErrorText = '';
+              const maxRetries = 3;
+              for (let attempt = 0; attempt < maxRetries; attempt++) {
+                if (attempt > 0) {
+                  console.log(`[CART] Retry ${attempt}/${maxRetries - 1} — waiting ${attempt * 1000}ms for variant propagation...`);
+                  await new Promise(r => setTimeout(r, attempt * 1000));
+                }
+
+                cartRes = await fetch('/cart/add.js', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: cartPayload,
+                });
+
+                if (cartRes.ok) break;
+
+                cartErrorText = await cartRes.text();
+                const isSoldOut = cartErrorText.toLowerCase().includes('sold out') || cartErrorText.toLowerCase().includes('not available');
+                if (!isSoldOut) break; // non-inventory error, don't retry
+                console.warn(`[CART] /cart/add.js returned sold out on attempt ${attempt + 1}:`, cartErrorText.slice(0, 200));
+              }
+
+              if (!cartRes || !cartRes.ok) {
                 let cartMessage = 'Failed to add item to cart';
                 try {
                   const cartErrorJson = JSON.parse(cartErrorText);
@@ -588,7 +608,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 } catch {
                   if (cartErrorText) cartMessage = cartErrorText;
                 }
-                console.error('Shopify cart add error:', cartRes.status, cartErrorText);
+                console.error('Shopify cart add error:', cartRes?.status, cartErrorText);
                 throw new Error(cartMessage);
               }
 
