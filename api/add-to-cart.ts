@@ -408,23 +408,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('[CART] Calculated price:', priceStr);
 
         // 4. Create a new variant with the exact price
-        let result = await createVariant(config.shopifyProductId, priceStr, accessToken);
+        const firstAttempt = await createVariant(config.shopifyProductId, priceStr, accessToken);
+        let variantId: string | null = firstAttempt.ok ? firstAttempt.variantId : null;
+        let lastError: string = firstAttempt.ok ? '' : firstAttempt.error;
 
         // If variant limit reached (422), try emergency cleanup and retry once
-        if (!result.ok) {
-            if (result.status === 422) {
-                console.warn('[CART] Variant creation returned 422 — attempting emergency cleanup');
-                const cleaned = await emergencyCleanup(config.shopifyProductId, accessToken);
-                if (cleaned > 0) {
-                    console.log('[CART] Emergency cleanup freed', cleaned, 'slots — retrying variant creation');
-                    result = await createVariant(config.shopifyProductId, priceStr, accessToken);
+        if (!firstAttempt.ok && firstAttempt.status === 422) {
+            console.warn('[CART] Variant creation returned 422 — attempting emergency cleanup');
+            const cleaned = await emergencyCleanup(config.shopifyProductId, accessToken);
+            if (cleaned > 0) {
+                console.log('[CART] Emergency cleanup freed', cleaned, 'slots — retrying variant creation');
+                const retry = await createVariant(config.shopifyProductId, priceStr, accessToken);
+                if (retry.ok) {
+                    variantId = retry.variantId;
+                } else {
+                    lastError = retry.error;
                 }
             }
         }
 
-        if (!result.ok) {
+        if (!variantId) {
             return res.status(502).json({
-                error: `Failed to create variant: ${result.error}`,
+                error: `Failed to create variant: ${lastError}`,
                 debug: { productId: config.shopifyProductId, store: SHOPIFY_STORE },
             });
         }
@@ -435,7 +440,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         return res.status(200).json({
             success: true,
-            variantId: result.variantId,
+            variantId,
             quantity,
             price: priceStr,
             properties,
