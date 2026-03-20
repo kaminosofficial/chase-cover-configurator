@@ -251,11 +251,18 @@ function generateVariantOptionValue(): string {
     return `CC-${ts}-${rand}`;
 }
 
+interface VariantCreateResult {
+    ok: boolean;
+    variantId?: string;
+    error?: string;
+    status?: number;
+}
+
 async function createVariant(
     productId: string,
     price: string,
     accessToken: string
-): Promise<{ ok: true; variantId: string } | { ok: false; error: string; status: number }> {
+): Promise<VariantCreateResult> {
     const optionValue = generateVariantOptionValue();
     console.log('[CART] Creating variant:', { productId, price, optionValue });
 
@@ -409,8 +416,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // 4. Create a new variant with the exact price
         const firstAttempt = await createVariant(config.shopifyProductId, priceStr, accessToken);
-        let variantId: string | null = firstAttempt.ok ? firstAttempt.variantId : null;
-        let lastError: string = firstAttempt.ok ? '' : firstAttempt.error;
+        let variantId: string | undefined = firstAttempt.variantId;
+        let lastError: string = firstAttempt.error || '';
 
         // If variant limit reached (422), try emergency cleanup and retry once
         if (!firstAttempt.ok && firstAttempt.status === 422) {
