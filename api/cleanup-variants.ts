@@ -2,6 +2,8 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const SHOPIFY_STORE = (process.env.SHOPIFY_STORE || '').trim();
 const SHOPIFY_ACCESS_TOKEN = (process.env.SHOPIFY_ACCESS_TOKEN || '').trim() || undefined;
+const SHOPIFY_CLIENT_ID = (process.env.SHOPIFY_CLIENT_ID || '').trim() || undefined;
+const SHOPIFY_CLIENT_SECRET = (process.env.SHOPIFY_CLIENT_SECRET || '').trim() || undefined;
 const SHOPIFY_PRODUCT_ID = (process.env.SHOPIFY_PRODUCT_ID || '').trim() || undefined;
 const CRON_SECRET = (process.env.CRON_SECRET || '').trim() || undefined;
 
@@ -48,11 +50,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        if (!SHOPIFY_ACCESS_TOKEN) {
-            return res.status(500).json({ error: 'SHOPIFY_ACCESS_TOKEN not configured' });
+        // Auth: use static token, fall back to OAuth client_credentials
+        let accessToken = SHOPIFY_ACCESS_TOKEN;
+        if (!accessToken && SHOPIFY_CLIENT_ID && SHOPIFY_CLIENT_SECRET) {
+            try {
+                const tokenRes = await fetch(`https://${SHOPIFY_STORE}/admin/oauth/access_token`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        grant_type: 'client_credentials',
+                        client_id: SHOPIFY_CLIENT_ID,
+                        client_secret: SHOPIFY_CLIENT_SECRET,
+                    }).toString(),
+                });
+                if (tokenRes.ok) {
+                    const tokenData = await tokenRes.json();
+                    accessToken = tokenData.access_token;
+                }
+            } catch { /* ignore */ }
         }
 
-        const productId = await resolveProductId(SHOPIFY_ACCESS_TOKEN);
+        if (!accessToken) {
+            return res.status(500).json({
+                error: 'Shopify auth not configured. Set SHOPIFY_ACCESS_TOKEN env var in Vercel.',
+                debug: {
+                    hasStaticToken: !!SHOPIFY_ACCESS_TOKEN,
+                    hasClientId: !!SHOPIFY_CLIENT_ID,
+                    hasClientSecret: !!SHOPIFY_CLIENT_SECRET,
+                    store: SHOPIFY_STORE || '(not set)',
+                },
+            });
+        }
+
+        const productId = await resolveProductId(accessToken);
         if (!productId) {
             return res.status(400).json({ error: 'Could not resolve product ID. Set SHOPIFY_PRODUCT_ID env var.' });
         }
@@ -62,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // List all variants
         const listRes = await fetch(
             `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants.json?limit=250`,
-            { headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN } }
+            { headers: { 'X-Shopify-Access-Token': accessToken } }
         );
 
         if (!listRes.ok) {
@@ -100,7 +130,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             try {
                 const delRes = await fetch(
                     `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants/${v.id}.json`,
-                    { method: 'DELETE', headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN } }
+                    { method: 'DELETE', headers: { 'X-Shopify-Access-Token': accessToken } }
                 );
 
                 if (delRes.ok) {
