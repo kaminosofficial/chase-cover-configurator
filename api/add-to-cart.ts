@@ -411,12 +411,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let result = await createVariant(config.shopifyProductId, priceStr, accessToken);
 
         // If variant limit reached (422), try emergency cleanup and retry once
-        if (!result.ok && result.status === 422) {
-            console.warn('[CART] Variant creation returned 422 — attempting emergency cleanup');
-            const cleaned = await emergencyCleanup(config.shopifyProductId, accessToken);
-            if (cleaned > 0) {
-                console.log('[CART] Emergency cleanup freed', cleaned, 'slots — retrying variant creation');
-                result = await createVariant(config.shopifyProductId, priceStr, accessToken);
+        if (!result.ok) {
+            if (result.status === 422) {
+                console.warn('[CART] Variant creation returned 422 — attempting emergency cleanup');
+                const cleaned = await emergencyCleanup(config.shopifyProductId, accessToken);
+                if (cleaned > 0) {
+                    console.log('[CART] Emergency cleanup freed', cleaned, 'slots — retrying variant creation');
+                    result = await createVariant(config.shopifyProductId, priceStr, accessToken);
+                }
             }
         }
 
