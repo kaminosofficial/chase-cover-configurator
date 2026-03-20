@@ -290,8 +290,30 @@ async function createVariant(
         let parsed: any;
         try { parsed = JSON.parse(resText); } catch { parsed = undefined; }
         const newVariantId = parsed?.variant?.id;
+        const inventoryItemId = parsed?.variant?.inventory_item_id;
         if (newVariantId) {
-            console.log('[CART] Variant created:', { variantId: String(newVariantId), price, optionValue });
+            console.log('[CART] Variant created:', { variantId: String(newVariantId), price, optionValue, inventoryItemId });
+
+            // Disable inventory tracking so the variant is never "sold out"
+            if (inventoryItemId) {
+                try {
+                    const invRes = await fetch(
+                        `https://${SHOPIFY_STORE}/admin/api/2025-10/inventory_items/${inventoryItemId}.json`,
+                        {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-Shopify-Access-Token': accessToken,
+                            },
+                            body: JSON.stringify({ inventory_item: { tracked: false } }),
+                        }
+                    );
+                    console.log('[CART] Inventory tracking disabled:', invRes.ok ? 'success' : invRes.status);
+                } catch (err: any) {
+                    console.warn('[CART] Failed to disable inventory tracking:', err.message);
+                }
+            }
+
             return { ok: true, variantId: String(newVariantId) };
         }
         return { ok: false, error: 'Variant created but no ID in response', status: 200 };
