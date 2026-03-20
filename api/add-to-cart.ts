@@ -292,9 +292,31 @@ async function createVariant(
         const newVariantId = parsed?.variant?.id;
         const inventoryItemId = parsed?.variant?.inventory_item_id;
         if (newVariantId) {
-            console.log('[CART] Variant created:', { variantId: String(newVariantId), price, optionValue, inventoryItemId });
+            const vid = String(newVariantId);
+            console.log('[CART] Variant created:', { variantId: vid, price, optionValue, inventoryItemId });
 
-            // Disable inventory tracking so the variant is never "sold out"
+            // Ensure variant allows overselling (belt-and-suspenders: re-apply after creation)
+            try {
+                const updateRes = await fetch(
+                    `https://${SHOPIFY_STORE}/admin/api/2025-10/variants/${vid}.json`,
+                    {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Shopify-Access-Token': accessToken,
+                        },
+                        body: JSON.stringify({
+                            variant: { id: Number(vid), inventory_policy: 'continue', inventory_management: null },
+                        }),
+                    }
+                );
+                const updateText = await updateRes.text();
+                console.log('[CART] Variant update (inventory_policy=continue):', updateRes.ok ? 'success' : `${updateRes.status} ${updateText.slice(0, 200)}`);
+            } catch (err: any) {
+                console.warn('[CART] Failed to update variant inventory_policy:', err.message);
+            }
+
+            // Also try to disable tracking on the inventory item (needs write_inventory scope)
             if (inventoryItemId) {
                 try {
                     const invRes = await fetch(
@@ -308,13 +330,14 @@ async function createVariant(
                             body: JSON.stringify({ inventory_item: { tracked: false } }),
                         }
                     );
-                    console.log('[CART] Inventory tracking disabled:', invRes.ok ? 'success' : invRes.status);
+                    const invText = await invRes.text();
+                    console.log('[CART] Inventory item tracked=false:', invRes.ok ? 'success' : `${invRes.status} ${invText.slice(0, 200)}`);
                 } catch (err: any) {
                     console.warn('[CART] Failed to disable inventory tracking:', err.message);
                 }
             }
 
-            return { ok: true, variantId: String(newVariantId) };
+            return { ok: true, variantId: vid };
         }
         return { ok: false, error: 'Variant created but no ID in response', status: 200 };
     }
