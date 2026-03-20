@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { PRICING, getStormCollarPrice, onPricingLoaded } from '../config/pricing';
+import { computePricingBreakdown } from '../utils/pricing.js';
 
 export type HoleShape = 'round' | 'rect';
 
@@ -23,7 +24,7 @@ export interface ConfigState {
   sk: number;
   drip: boolean;
   diag: boolean;
-  mat: 'galvanized' | 'copper';
+  mat: 'galvanized' | 'stainless' | 'copper';
   gauge: 10 | 12 | 14 | 16 | 18 | 20 | 24;
   pc: boolean;
   pcCol: string;
@@ -60,7 +61,6 @@ function computePrice(s: Partial<StoreData>): number {
   const w = s.w ?? 24, l = s.l ?? 36, sk = s.sk ?? 3;
   const holes = s.holes ?? 0, pc = s.pc ?? false;
   const gauge = s.gauge ?? 24, mat = s.mat ?? 'galvanized';
-  const base = PRICING.AREA_RATE * w * l + PRICING.LINEAR_RATE * (w + l) + PRICING.BASE_FIXED;
 
   // Storm collar cost: one collar per hole where stormCollar is enabled
   let stormCollarCost = 0;
@@ -70,12 +70,7 @@ function computePrice(s: Partial<StoreData>): number {
     if (c?.stormCollar && c.shape !== 'rect') stormCollarCost += getStormCollarPrice(c.dia);
   }
 
-  const subtotal = base
-    + holes * PRICING.HOLE_PRICE
-    + (sk >= PRICING.SKIRT_THRESHOLD ? PRICING.SKIRT_SURCHARGE : 0)
-    + (pc && mat !== 'copper' ? PRICING.POWDER_COAT : 0)
-    + stormCollarCost;
-  return subtotal * (PRICING.GAUGE_MULT[gauge] || 1) * (PRICING.MATERIAL_MULT[mat] || 1);
+  return computePricingBreakdown({ w, l, sk, holes, gauge, pc, mat }, PRICING, stormCollarCost).total;
 }
 
 const initial: StoreData = {

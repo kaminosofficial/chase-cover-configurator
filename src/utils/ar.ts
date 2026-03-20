@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-import type { ConfigState } from '../store/configStore';
+import type { ConfigState } from '../store/configStore.js';
 
 export const SC = 0.02;
 

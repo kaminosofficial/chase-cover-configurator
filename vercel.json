@@ -1,6 +1,12 @@
 {
     "buildCommand": "npm run build:vercel",
     "outputDirectory": "dist",
+    "crons": [
+        {
+            "path": "/api/cleanup-variants",
+            "schedule": "0 0 */3 * *"
+        }
+    ],
     "headers": [
         {
             "source": "/chase-cover-configurator.iife.js",

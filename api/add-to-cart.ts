@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchPricingFromPublicSheet, getStormCollarPrice } from '../lib/pricing-sheet.js';
 import { getHoleEdgeOffsets, holeWorld } from '../src/utils/geometry.js';
+import { computePricingBreakdown } from '../src/utils/pricing.js';
 
 const SHOPIFY_STORE = (process.env.SHOPIFY_STORE || '').trim();
 const SHOPIFY_ACCESS_TOKEN = (process.env.SHOPIFY_ACCESS_TOKEN || '').trim() || undefined;
@@ -58,14 +59,21 @@ interface OrderConfig {
 
 let shopifyTokenCache: { token: string; expiresAt: number } | null = null;
 
-function wait(ms: number) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+function applyProductIdFallback(config: OrderConfig) {
+    if (!config.shopifyProductId && SHOPIFY_PRODUCT_ID) {
+        config.shopifyProductId = SHOPIFY_PRODUCT_ID;
+        console.log('[CART] Using env var SHOPIFY_PRODUCT_ID:', SHOPIFY_PRODUCT_ID);
+    }
 }
 
 async function getShopifyAccessToken() {
-    if (SHOPIFY_ACCESS_TOKEN) return SHOPIFY_ACCESS_TOKEN;
+    if (SHOPIFY_ACCESS_TOKEN) {
+        console.log('[CART] Using static SHOPIFY_ACCESS_TOKEN');
+        return SHOPIFY_ACCESS_TOKEN;
+    }
 
     if (shopifyTokenCache && shopifyTokenCache.expiresAt > Date.now() + 5 * 60 * 1000) {
+        console.log('[CART] Using cached OAuth token');
         return shopifyTokenCache.token;
     }
 
@@ -93,6 +101,7 @@ async function getShopifyAccessToken() {
     const data = await res.json();
     const expiresIn = data.expires_in || 3600;
     shopifyTokenCache = { token: data.access_token, expiresAt: Date.now() + expiresIn * 1000 };
+    console.log('[CART] Received OAuth token, expires in', expiresIn, 'seconds');
     return data.access_token;
 }
 
@@ -102,24 +111,6 @@ async function getShopifyAccessToken() {
 
 async function fetchPricingFromSheet() {
     return fetchPricingFromPublicSheet(GOOGLE_SHEET_ID, 'pricing');
-}
-
-function computePrice(config: OrderConfig, p: Awaited<ReturnType<typeof fetchPricingFromSheet>>): number {
-    const base = p.AREA_RATE * config.w * config.l + p.LINEAR_RATE * (config.w + config.l) + p.BASE_FIXED;
-
-    let stormCollarCost = 0;
-    const collars = [config.collarA, config.collarB, config.collarC];
-    for (let i = 0; i < config.holes; i++) {
-        const c = collars[i];
-        if (c?.stormCollar) stormCollarCost += getStormCollarPrice(c.dia, p.STORM_COLLAR_PRICES ?? {});
-    }
-
-    const subtotal = base
-        + config.holes * p.HOLE_PRICE
-        + (config.sk >= p.SKIRT_THRESHOLD ? p.SKIRT_SURCHARGE : 0)
-        + (config.pc && config.mat !== 'copper' ? p.POWDER_COAT : 0)
-        + stormCollarCost;
-    return subtotal * (p.GAUGE_MULT[config.gauge] || 1) * (p.MATERIAL_MULT[config.mat] || 1);
 }
 
 /* ------------------------------------------------------------------ */
@@ -163,6 +154,11 @@ function getColorName(hex: string): string {
     return 'Blue';
 }
 
+function getMaterialLabel(material: string): string {
+    if (material === 'copper') return 'Copper';
+    return 'Stainless Steel';
+}
+
 function getHoleCutoutValue(id: 'A' | 'B' | 'C', config: OrderConfig): string {
     const cachedValue = id === 'A'
         ? config.holeCutoutA
@@ -197,7 +193,7 @@ function getHolePositionLabel(index: number, total: number): string {
 function buildCartProperties(config: OrderConfig): { key: string; value: string }[] {
     const props: { key: string; value: string }[] = [
         { key: 'Dimensions', value: `${formatFrac(config.l)}" L × ${formatFrac(config.w)}" W × ${formatFrac(config.sk)}" Skirt` },
-        { key: 'Material & Gauge', value: `${config.mat === 'copper' ? 'Copper' : 'Galvanized'} — ${config.gauge}ga` },
+        { key: 'Material & Gauge', value: `${getMaterialLabel(config.mat)} — ${config.gauge}ga` },
         { key: 'Options', value: `Drip Edge: ${config.drip ? 'Yes' : 'No'} · Diagonal Crease: ${config.diag ? 'Yes' : 'No'}` },
     ];
 
@@ -246,96 +242,91 @@ function buildCartProperties(config: OrderConfig): { key: string; value: string 
 }
 
 /* ------------------------------------------------------------------ */
-/*  Shopify Admin API helpers                                          */
+/*  Shopify Admin API — Create variant with unique price               */
 /* ------------------------------------------------------------------ */
 
-async function updateVariantPrice(variantId: string, price: string, accessToken: string): Promise<boolean> {
-    try {
-        const res = await fetch(
-            `https://${SHOPIFY_STORE}/admin/api/2025-10/variants/${variantId}.json`,
-            {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Shopify-Access-Token': accessToken,
-                },
-                body: JSON.stringify({
-                    variant: { id: Number(variantId), price },
-                }),
-            }
-        );
-        if (!res.ok) {
-            const text = await res.text();
-            console.error('[CART] Failed to update variant price:', res.status, text);
-            return false;
-        }
-        console.log('[CART] Variant price updated to', price);
-        return true;
-    } catch (err: any) {
-        console.error('[CART] Variant price update error:', err.message);
-        return false;
-    }
+function generateVariantOptionValue(): string {
+    const ts = Date.now();
+    const rand = Math.random().toString(16).slice(2, 6);
+    return `CC-${ts}-${rand}`;
 }
 
-async function updateProductImage(productId: string, base64DataUrl: string, accessToken: string): Promise<string | undefined> {
-    try {
-        const match = base64DataUrl.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/);
-        if (!match) return undefined;
-        const base64Data = match[2];
-        const ext = match[1];
+async function createVariant(
+    productId: string,
+    price: string,
+    accessToken: string
+): Promise<{ ok: true; variantId: string } | { ok: false; error: string; status: number }> {
+    const optionValue = generateVariantOptionValue();
+    console.log('[CART] Creating variant:', { productId, price, optionValue });
 
-        const createRes = await fetch(
-            `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images.json`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Shopify-Access-Token': accessToken,
+    const createRes = await fetch(
+        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants.json`,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Shopify-Access-Token': accessToken,
+            },
+            body: JSON.stringify({
+                variant: {
+                    option1: optionValue,
+                    price,
+                    inventory_policy: 'continue',
+                    inventory_management: null,
                 },
-                body: JSON.stringify({
-                    image: {
-                        attachment: base64Data,
-                        filename: `chase-cover-${Date.now()}.${ext}`,
-                    },
-                }),
-            }
+            }),
+        }
+    );
+
+    const resText = await createRes.text();
+    if (createRes.ok) {
+        let parsed: any;
+        try { parsed = JSON.parse(resText); } catch { parsed = undefined; }
+        const newVariantId = parsed?.variant?.id;
+        if (newVariantId) {
+            console.log('[CART] Variant created:', { variantId: String(newVariantId), price, optionValue });
+            return { ok: true, variantId: String(newVariantId) };
+        }
+        return { ok: false, error: 'Variant created but no ID in response', status: 200 };
+    }
+
+    console.error('[CART] Variant creation failed:', { status: createRes.status, body: resText.slice(0, 500) });
+    return { ok: false, error: `Shopify returned ${createRes.status}: ${resText.slice(0, 300)}`, status: createRes.status };
+}
+
+/** Emergency cleanup: delete CC-* variants older than the given threshold */
+async function emergencyCleanup(productId: string, accessToken: string, maxAgeMs: number = 24 * 60 * 60 * 1000): Promise<number> {
+    console.log('[CART] Running emergency cleanup for product', productId);
+    try {
+        const listRes = await fetch(
+            `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants.json?limit=250`,
+            { headers: { 'X-Shopify-Access-Token': accessToken } }
         );
+        if (!listRes.ok) return 0;
 
-        if (!createRes.ok) {
-            console.log('[IMAGE] Product image create failed:', createRes.status);
-            return undefined;
+        const listData = await listRes.json();
+        const variants = listData?.variants || [];
+        const cutoff = Date.now() - maxAgeMs;
+        let deleted = 0;
+
+        for (const v of variants) {
+            const opt = String(v.option1 || '');
+            if (!opt.startsWith('CC-')) continue;
+            const createdAt = new Date(v.created_at).getTime();
+            if (createdAt >= cutoff) continue;
+
+            const delRes = await fetch(
+                `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants/${v.id}.json`,
+                { method: 'DELETE', headers: { 'X-Shopify-Access-Token': accessToken } }
+            );
+            if (delRes.ok) deleted++;
         }
 
-        const createData = await createRes.json();
-        const newImageId = createData?.image?.id;
-        const imageUrl = createData?.image?.src;
-
-        // Clean up old images (fire-and-forget)
-        if (newImageId) {
-            (async () => {
-                try {
-                    const listRes = await fetch(
-                        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images.json`,
-                        { headers: { 'X-Shopify-Access-Token': accessToken } }
-                    );
-                    if (listRes.ok) {
-                        const listData = await listRes.json();
-                        const oldImages = (listData?.images || []).filter((img: any) => img.id !== newImageId);
-                        for (const img of oldImages) {
-                            fetch(
-                                `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images/${img.id}.json`,
-                                { method: 'DELETE', headers: { 'X-Shopify-Access-Token': accessToken } }
-                            ).catch(() => {});
-                        }
-                    }
-                } catch { /* ignore */ }
-            })();
-        }
-
-        return imageUrl;
+        console.log('[CART] Emergency cleanup deleted', deleted, 'stale variants');
+        return deleted;
     } catch (err: any) {
-        console.log('[IMAGE] Product image update error (non-fatal):', err.message);
-        return undefined;
+        console.error('[CART] Emergency cleanup error:', err.message);
+        return 0;
     }
 }
 
@@ -349,13 +340,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         const config: OrderConfig = req.body;
-        console.log('[CART] Add-to-cart request received, productId:', config.shopifyProductId, 'variantId:', config.shopifyVariantId);
+        console.log('[CART] Request context:', {
+            origin: req.headers.origin || null,
+            referer: req.headers.referer || null,
+            host: req.headers.host || null,
+        });
+        console.log('[CART] Add-to-cart request received, productId:', config.shopifyProductId);
 
-        // Use env var fallback for product ID if frontend didn't pass one
-        if (!config.shopifyProductId && SHOPIFY_PRODUCT_ID) {
-            config.shopifyProductId = SHOPIFY_PRODUCT_ID;
-            console.log('[CART] Using env var SHOPIFY_PRODUCT_ID:', SHOPIFY_PRODUCT_ID);
-        }
+        applyProductIdFallback(config);
 
         // Validate
         if (!config.w || !config.l || !config.sk || !config.mat || !config.gauge) {
@@ -369,108 +361,79 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ]);
 
         console.log('[CART] Auth OK, store:', SHOPIFY_STORE);
-        console.log('[CART] productId:', config.shopifyProductId || '(none)', 'variantId:', config.shopifyVariantId || '(none)');
 
-        // If variantId is missing, try to resolve it
-        if (!config.shopifyVariantId) {
-            // Attempt 1: Fetch from specific product
-            if (config.shopifyProductId) {
-                console.log('[CART] Attempt 1: Fetching variants for product', config.shopifyProductId);
-                try {
-                    const prodRes = await fetch(
-                        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${config.shopifyProductId}.json?fields=id,variants`,
-                        { headers: { 'X-Shopify-Access-Token': accessToken } }
-                    );
-                    console.log('[CART] Product fetch status:', prodRes.status);
-                    if (prodRes.ok) {
-                        const prodData = await prodRes.json();
-                        const firstVariant = prodData?.product?.variants?.[0];
-                        if (firstVariant?.id) {
-                            config.shopifyVariantId = String(firstVariant.id);
-                            console.log('[CART] Resolved variantId from product:', config.shopifyVariantId);
-                        }
-                    } else {
-                        const errText = await prodRes.text();
-                        console.error('[CART] Product fetch failed:', prodRes.status, errText);
+        // 2. Resolve product ID if missing
+        if (!config.shopifyProductId) {
+            console.log('[CART] No product ID — listing products to find chase cover...');
+            try {
+                const listRes = await fetch(
+                    `https://${SHOPIFY_STORE}/admin/api/2025-10/products.json?limit=50&fields=id,title`,
+                    { headers: { 'X-Shopify-Access-Token': accessToken } }
+                );
+                if (listRes.ok) {
+                    const listData = await listRes.json();
+                    const products = listData?.products || [];
+                    const chaseProduct = products.find((p: any) =>
+                        p.title?.toLowerCase().includes('chase')
+                    ) || products[0];
+                    if (chaseProduct?.id) {
+                        config.shopifyProductId = String(chaseProduct.id);
+                        console.log('[CART] Resolved product from list:', chaseProduct.title, '→', config.shopifyProductId);
                     }
-                } catch (err: any) {
-                    console.error('[CART] Product fetch error:', err.message);
                 }
-            }
-
-            // Attempt 2: List all products and use the first one with "chase" in the title
-            if (!config.shopifyVariantId) {
-                console.log('[CART] Attempt 2: Listing products to find chase cover...');
-                try {
-                    const listRes = await fetch(
-                        `https://${SHOPIFY_STORE}/admin/api/2025-10/products.json?limit=50&fields=id,title,variants`,
-                        { headers: { 'X-Shopify-Access-Token': accessToken } }
-                    );
-                    console.log('[CART] Products list status:', listRes.status);
-                    if (listRes.ok) {
-                        const listData = await listRes.json();
-                        const products = listData?.products || [];
-                        console.log('[CART] Found', products.length, 'products');
-
-                        // Try to find a product with "chase" in the title, otherwise use the first one
-                        const chaseProduct = products.find((p: any) =>
-                            p.title?.toLowerCase().includes('chase')
-                        ) || products[0];
-
-                        if (chaseProduct?.variants?.[0]?.id) {
-                            config.shopifyProductId = String(chaseProduct.id);
-                            config.shopifyVariantId = String(chaseProduct.variants[0].id);
-                            console.log('[CART] Resolved from product list:', chaseProduct.title, '→ productId:', config.shopifyProductId, 'variantId:', config.shopifyVariantId);
-                        }
-                    } else {
-                        const errText = await listRes.text();
-                        console.error('[CART] Products list failed:', listRes.status, errText);
-                    }
-                } catch (err: any) {
-                    console.error('[CART] Products list error:', err.message);
-                }
+            } catch (err: any) {
+                console.error('[CART] Product list error:', err.message);
             }
         }
 
-        if (!config.shopifyVariantId) {
+        if (!config.shopifyProductId) {
             return res.status(400).json({
-                error: 'Could not resolve a Shopify variant. Check that: (1) SHOPIFY_PRODUCT_ID env var is set in Vercel, (2) the Shopify app has read_products scope, (3) the product exists.',
-                debug: { shopifyProductId: config.shopifyProductId || null, envProductId: SHOPIFY_PRODUCT_ID || null, store: SHOPIFY_STORE },
+                error: 'Could not resolve a Shopify product. Set SHOPIFY_PRODUCT_ID env var in Vercel or pass product-id on the mount element.',
+                debug: { envProductId: SHOPIFY_PRODUCT_ID || null, store: SHOPIFY_STORE },
             });
         }
 
-        // 2. Calculate price server-side
-        const unitPrice = computePrice(config, pricing);
+        // 3. Calculate price server-side
+        let stormCollarCost = 0;
+        const collars = [config.collarA, config.collarB, config.collarC];
+        for (let i = 0; i < config.holes; i++) {
+            const c = collars[i];
+            if (c?.stormCollar) stormCollarCost += getStormCollarPrice(c.dia, pricing.STORM_COLLAR_PRICES ?? {});
+        }
+
+        const pricingBreakdown = computePricingBreakdown(config, pricing, stormCollarCost);
+        const unitPrice = pricingBreakdown.total;
         const priceStr = unitPrice.toFixed(2);
+        console.log('[CART] Pricing breakdown:', { ...pricingBreakdown, paintedEnabled: config.pc });
         console.log('[CART] Calculated price:', priceStr);
 
-        // 3. Update variant price + product image in parallel
-        const updates: Promise<any>[] = [
-            updateVariantPrice(config.shopifyVariantId, priceStr, accessToken),
-        ];
+        // 4. Create a new variant with the exact price
+        let result = await createVariant(config.shopifyProductId, priceStr, accessToken);
 
-        if (config.image && config.shopifyProductId) {
-            updates.push(
-                Promise.race([
-                    updateProductImage(config.shopifyProductId, config.image, accessToken),
-                    wait(8000).then(() => undefined),
-                ])
-            );
+        // If variant limit reached (422), try emergency cleanup and retry once
+        if (!result.ok && result.status === 422) {
+            console.warn('[CART] Variant creation returned 422 — attempting emergency cleanup');
+            const cleaned = await emergencyCleanup(config.shopifyProductId, accessToken);
+            if (cleaned > 0) {
+                console.log('[CART] Emergency cleanup freed', cleaned, 'slots — retrying variant creation');
+                result = await createVariant(config.shopifyProductId, priceStr, accessToken);
+            }
         }
 
-        const [priceUpdated] = await Promise.all(updates);
-
-        if (!priceUpdated) {
-            return res.status(502).json({ error: 'Failed to update variant price on Shopify' });
+        if (!result.ok) {
+            return res.status(502).json({
+                error: `Failed to create variant: ${result.error}`,
+                debug: { productId: config.shopifyProductId, store: SHOPIFY_STORE },
+            });
         }
 
-        // 4. Build the line item properties for the frontend to use with /cart/add.js
+        // 5. Build the line item properties for the frontend to use with /cart/add.js
         const properties = buildCartProperties(config);
         const quantity = Math.max(1, Math.min(99, Math.round(config.quantity || 1)));
 
         return res.status(200).json({
             success: true,
-            variantId: config.shopifyVariantId,
+            variantId: result.variantId,
             quantity,
             price: priceStr,
             properties,

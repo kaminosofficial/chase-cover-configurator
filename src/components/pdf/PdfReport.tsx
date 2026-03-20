@@ -127,7 +127,7 @@ export function PdfReport() {
                 </tr>
                 <tr>
                   <td style={{ padding: '4px 0', color: '#666' }}>Material</td>
-                  <td style={{ padding: '4px 0', fontWeight: '500' }}>{config.gauge} Ga. {config.mat === 'galvanized' ? 'Stainless / Galvanized' : 'Copper'}</td>
+                  <td style={{ padding: '4px 0', fontWeight: '500' }}>{config.gauge} Ga. {config.mat === 'copper' ? 'Copper' : 'Stainless Steel'}</td>
                 </tr>
                 <tr>
                   <td style={{ padding: '4px 0', color: '#666' }}>Powder Coat</td>

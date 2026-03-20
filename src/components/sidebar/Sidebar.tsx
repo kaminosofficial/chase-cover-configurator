@@ -12,6 +12,7 @@ import { NotesField } from './NotesField';
 import { useConfigStore } from '../../store/configStore';
 import { PRICING, getStormCollarPrice } from '../../config/pricing';
 import { InfoTooltip } from './InfoTooltip';
+import { computePricingBreakdown } from '../../utils/pricing.js';
 
 interface SidebarProps {
   descExpanded: boolean;
@@ -32,13 +33,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
   const holes = config.holes;
   const pc = config.pc;
 
-  const [introExpanded, setIntroExpanded] = useState(true);
-
-  // Price breakdown rows
-  const base = PRICING.AREA_RATE * config.w * config.l + PRICING.LINEAR_RATE * (config.w + config.l) + PRICING.BASE_FIXED;
-  const holeAmt = holes * PRICING.HOLE_PRICE;
-  const skirtAmt = config.sk >= PRICING.SKIRT_THRESHOLD ? PRICING.SKIRT_SURCHARGE : 0;
-  const pcAmt = pc && config.mat !== 'copper' ? PRICING.POWDER_COAT : 0;
+  const [introExpanded, setIntroExpanded] = useState(false);
 
   // Per-hole storm collar costs (only for holes with storm collar enabled)
   const holeLabels = holes === 1
@@ -51,26 +46,22 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
     .map((c, i) => ({ label: holeLabels[i], price: c.stormCollar && c.shape !== 'rect' ? getStormCollarPrice(c.dia) : 0 }))
     .filter(item => item.price > 0);
   const scTotal = scItems.reduce((sum, item) => sum + item.price, 0);
-
-  const subtotal = base + holeAmt + scTotal + skirtAmt + pcAmt;
-  const gaugeMult = PRICING.GAUGE_MULT[config.gauge] || 1;
-  const matMult = PRICING.MATERIAL_MULT[config.mat] || 1;
-  const total = subtotal * gaugeMult * matMult;
+  const breakdown = computePricingBreakdown(config, PRICING, scTotal);
 
   const bdRows: { label: string; value: string; cls: string }[] = [
-    { label: `Base Price (${config.w}" x ${config.l}")`, value: fmt(base), cls: 'bd-row' },
-    { label: `${holes} Flue Hole${holes !== 1 ? 's' : ''}`, value: fmt(holeAmt), cls: 'bd-row' },
+    { label: `Base Price (${config.w}" x ${config.l}")`, value: fmt(breakdown.basePrice), cls: 'bd-row' },
+    { label: `${holes} Flue Hole${holes !== 1 ? 's' : ''}`, value: fmt(breakdown.holesCost), cls: 'bd-row' },
     ...scItems.map(item => ({
       label: `Storm Collar - ${item.label}`,
       value: fmt(item.price),
       cls: 'bd-row',
     })),
-    ...(skirtAmt ? [{ label: 'Oversized Skirt Surcharge', value: fmt(skirtAmt), cls: 'bd-row' }] : []),
-    ...(pcAmt ? [{ label: 'Powder Coating', value: fmt(pcAmt), cls: 'bd-row' }] : []),
-    { label: 'Subtotal', value: fmt(subtotal), cls: 'bd-sub' },
-    ...(gaugeMult !== 1 ? [{ label: `${config.gauge} ga Material`, value: 'x ' + gaugeMult.toFixed(2), cls: 'bd-row' }] : []),
-    ...(matMult !== 1 ? [{ label: config.mat === 'copper' ? 'Copper' : 'Galvanized Steel', value: 'x ' + matMult.toFixed(2), cls: 'bd-row' }] : []),
-    { label: 'TOTAL ESTIMATE', value: fmt(total), cls: 'bd-total' },
+    ...(breakdown.skirtCost ? [{ label: 'Oversized Skirt Surcharge', value: fmt(breakdown.skirtCost), cls: 'bd-row' }] : []),
+    { label: 'Subtotal', value: fmt(breakdown.rawCost), cls: 'bd-sub' },
+    ...(breakdown.gaugeFactor !== 1 ? [{ label: `${config.gauge} ga Material`, value: 'x ' + breakdown.gaugeFactor.toFixed(2), cls: 'bd-row' }] : []),
+    ...(breakdown.materialFactor !== 1 ? [{ label: config.mat === 'copper' ? 'Copper' : 'Material Multiplier', value: 'x ' + breakdown.materialFactor.toFixed(2), cls: 'bd-row' }] : []),
+    ...(config.pc ? [{ label: 'Powder Coating', value: 'x ' + breakdown.paintedMultiplier.toFixed(2), cls: 'bd-row' }] : []),
+    { label: 'TOTAL ESTIMATE', value: fmt(breakdown.total), cls: 'bd-total' },
   ];
 
   return (
@@ -92,7 +83,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
               <div className="product-desc">
                 <div className={`product-desc-text${descExpanded ? ' expanded' : ''}`}>
                   Kaminos chase covers are custom-fabricated to your exact measurements for a precise,
-                  weatherproof fit. Choose from premium galvanized steel or copper - each built to
+                  weatherproof fit. Choose from premium stainless steel or copper - each built to
                   outlast and outperform standard covers. Add diagonal creases for improved water
                   drainage and a drip edge for extra protection. Backed by our lifetime warranty
                   against rust and corrosion.
@@ -103,7 +94,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
               </div>
 
               <div className="measure-note">
-                You must add an extra <strong>1/4"</strong> to both the length and width measurements for proper
+                You must add an extra <strong>1/2"</strong> to both the length and width measurements for proper
                 fitment. If you need a custom shape, please <a href="tel:+18887779789">give us a call</a>.{' '}
                 Need help measuring? <a href="https://kaminos.com/measuring-guide" target="_blank" rel="noreferrer">Click here</a>.
               </div>
@@ -144,7 +135,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
         <div className="section">
           <div className="section-title">
             Material &amp; Gauge
-            <InfoTooltip text="Galvanized steel is durable and cost-effective. Copper develops a natural patina over time and offers superior longevity." />
+            <InfoTooltip text="Stainless steel is durable and cost-effective. Copper develops a natural patina over time and offers superior longevity." />
           </div>
           <MaterialChips />
           <div className="field-row" style={{ marginTop: 10 }}>

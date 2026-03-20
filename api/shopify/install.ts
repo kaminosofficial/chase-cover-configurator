@@ -35,8 +35,9 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
         // Generate a simple random nonce for CSRF protection
         const nonce = Math.random().toString(36).substring(2) + Date.now().toString(36);
 
-        // Required scopes for draft order creation
-        const scopes = 'write_draft_orders,read_draft_orders';
+        // Required scopes for express checkout (draft orders), native cart price updates,
+        // product/variant lookup fallbacks, and optional preview image uploads.
+        const scopes = 'write_draft_orders,read_draft_orders,read_products,write_products,read_files,write_files';
 
         const authUrl =
             `https://${shop}/admin/oauth/authorize` +

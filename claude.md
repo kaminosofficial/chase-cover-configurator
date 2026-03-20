@@ -293,6 +293,24 @@ total = subtotal * GAUGE_MULT[gauge] * MATERIAL_MULT[material]
 
 **Powder coat**: Charged only when `pc === true && mat !== 'copper'`. When copper is selected, powder coat state is preserved in the store but the charge and color swatch are not applied.
 
+### Pricing Formula Derivation
+
+The base formula constants (AREA_RATE, LINEAR_RATE, BASE_FIXED) were derived from the **Lifetime Chimney Supply** printed price list for 24ga galvanized steel (base case, no multipliers). The price list is a table with rows and columns from 16" to 58" in 2" increments.
+
+**Derivation method** — the marginal cost of increasing one dimension by 1 inch is:
+
+```
+d(price)/dL = AREA_RATE * W + LINEAR_RATE
+```
+
+From the price table:
+- Row 16, per-2" increment ≈ $1.69 → per inch: 16 × AREA_RATE + LINEAR_RATE = 0.845
+- Row 18, per-2" increment ≈ $1.80 → per inch: 18 × AREA_RATE + LINEAR_RATE = 0.895
+
+Solving: AREA_RATE = 0.025, LINEAR_RATE = 0.445, then BASE_FIXED = 198.67 - 0.025×256 - 0.445×32 = 178.03.
+
+**Accuracy**: The formula matches the printed price list exactly at small sizes (16"–22" range). At larger sizes (40"+), there may be a small drift of a few dollars due to a possible quadratic per-dimension term in the original price table. This is under investigation — if confirmed, a `QUAD_RATE` constant will be added to the Google Sheet and code.
+
 ---
 
 ## PDF Generation
@@ -482,7 +500,7 @@ Single store `useConfigStore` with flat state. Mutation methods:
 - `setCollar(id, partial)`: Updates a specific collar (A/B/C) and recomputes price
 - `setOrbitEnabled(v)`: Enables/disables orbit controls (disabled during hole dragging)
 
-Defaults: W=48, L=60, Skirt=3, 1 hole, 10" dia, 3" collar height, centered, galvanized, 24ga, drip on, diagonal crease on.
+Defaults: W=48, L=60, Skirt=3, 1 hole, 10" dia, 2" collar height, centered, galvanized, 24ga, drip on, diagonal crease on.
 
 On startup, `loadPricingFromAPI()` fetches remote pricing. When it resolves, `onPricingLoaded()` triggers a price recompute in the store so the displayed price reflects the latest Google Sheet values.
 

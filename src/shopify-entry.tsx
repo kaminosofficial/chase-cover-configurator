@@ -171,6 +171,17 @@ import cssText from './styles/globals-scoped.css?inline';
     // Read Shopify product/variant IDs from the liquid DOM node
     const productId = mount.getAttribute('product-id') || undefined;
     const variantId = mount.getAttribute('variant-id') || undefined;
+    console.log('[BOOT] Configurator mount resolved:', {
+        tagName: mount.tagName.toLowerCase(),
+        productId,
+        variantId,
+        apiBase,
+        path: window.location.pathname,
+        search: window.location.search,
+    });
+    if (!variantId) {
+        console.warn('[BOOT] No variant-id attribute was found on the configurator mount. Runtime storefront fallback will be used.');
+    }
 
     // 9. Render the React app into the shadow root
     ReactDOM.createRoot(root).render(

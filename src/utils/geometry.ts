@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CSG } from 'three-csg-ts';
-import type { ConfigState, CollarState, HoleShape } from '../store/configStore';
+import type { ConfigState, CollarState, HoleShape } from '../store/configStore.js';
 
 type HoleId = 'A' | 'B' | 'C';
 
@@ -23,7 +23,7 @@ export const STORM_COLLAR_HEIGHT_INCHES = 2.5;
 export const MAX_DIAGONAL_RISE_INCHES = 0.75;
 
 export function mkMat(
-  mat: 'galvanized' | 'copper',
+  mat: 'galvanized' | 'stainless' | 'copper',
   pc: boolean,
   pcCol: string
 ): THREE.MeshStandardMaterial {

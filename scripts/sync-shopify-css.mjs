@@ -37,6 +37,10 @@ root.walkAtRules('import', atRule => {
 });
 
 root.walkRules(rule => {
+  if (rule.parent?.type === 'atrule' && /keyframes$/i.test(rule.parent.name || '')) {
+    return;
+  }
+
   if (!rule.selectors) return;
 
   const scopedSelectors = rule.selectors

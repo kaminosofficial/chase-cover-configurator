@@ -1,12 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchPricingFromPublicSheet, getStormCollarPrice } from '../lib/pricing-sheet.js';
 import { getHoleEdgeOffsets, holeWorld } from '../src/utils/geometry.js';
+import { computePricingBreakdown } from '../src/utils/pricing.js';
 
 const SHOPIFY_STORE = (process.env.SHOPIFY_STORE || '').trim();
 const SHOPIFY_ACCESS_TOKEN = (process.env.SHOPIFY_ACCESS_TOKEN || '').trim() || undefined;
 const SHOPIFY_CLIENT_ID = (process.env.SHOPIFY_CLIENT_ID || '').trim() || undefined;
 const SHOPIFY_CLIENT_SECRET = (process.env.SHOPIFY_CLIENT_SECRET || '').trim() || undefined;
 const GOOGLE_SHEET_ID = (process.env.GOOGLE_SHEET_ID || '').trim();
+const SHOPIFY_PRODUCT_ID = (process.env.SHOPIFY_PRODUCT_ID || '').trim() || undefined;
+const SHOPIFY_VARIANT_ID = (process.env.SHOPIFY_VARIANT_ID || '').trim() || undefined;
 const SHOPIFY_TOKEN_URL = `https://${SHOPIFY_STORE}/admin/oauth/access_token`;
 
 interface CollarConfig {
@@ -80,6 +83,18 @@ let shopifyTokenCache: { token: string; expiresAt: number } | null = null;
 
 function wait(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function applyShopifyCatalogFallbacks(config: OrderConfig) {
+    if (!config.shopifyVariantId && SHOPIFY_VARIANT_ID) {
+        config.shopifyVariantId = SHOPIFY_VARIANT_ID;
+        console.log('[DEBUG] Using env SHOPIFY_VARIANT_ID:', SHOPIFY_VARIANT_ID);
+    }
+
+    if (!config.shopifyProductId && SHOPIFY_PRODUCT_ID) {
+        config.shopifyProductId = SHOPIFY_PRODUCT_ID;
+        console.log('[DEBUG] Using env SHOPIFY_PRODUCT_ID:', SHOPIFY_PRODUCT_ID);
+    }
 }
 
 async function getShopifyAccessToken() {
@@ -173,185 +188,8 @@ async function getShopifyAccessToken() {
     throw new Error(`Failed to generate Shopify access token: ${lastStatus} ${lastText}`);
 }
 
-/**
- * Upload a base64 data URL image to Shopify using staged uploads (GraphQL).
- * Returns the Shopify-hosted image URL, or undefined on failure.
- */
-async function uploadImageToShopify(base64DataUrl: string, accessToken: string): Promise<string | undefined> {
-    try {
-        // Parse base64
-        const match = base64DataUrl.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/);
-        if (!match) return undefined;
-        const mimeType = `image/${match[1]}`;
-        const buffer = Buffer.from(match[2], 'base64');
-        const filename = `chase-cover-${Date.now()}.${match[1]}`;
-
-        // Step 1: Create staged upload target
-        const stagedRes = await fetch(`https://${SHOPIFY_STORE}/admin/api/2025-10/graphql.json`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Shopify-Access-Token': accessToken,
-            },
-            body: JSON.stringify({
-                query: `mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
-                    stagedUploadsCreate(input: $input) {
-                        stagedTargets { url resourceUrl parameters { name value } }
-                        userErrors { field message }
-                    }
-                }`,
-                variables: {
-                    input: [{
-                        resource: 'FILE',
-                        filename,
-                        mimeType,
-                        httpMethod: 'PUT',
-                    }],
-                },
-            }),
-        });
-        const stagedData = await stagedRes.json();
-        const target = stagedData?.data?.stagedUploadsCreate?.stagedTargets?.[0];
-        if (!target?.url) {
-            console.log('[IMAGE] Staged upload failed:', JSON.stringify(stagedData));
-            return undefined;
-        }
-
-        // Step 2: Upload the binary to the staged URL
-        const uploadRes = await fetch(target.url, {
-            method: 'PUT',
-            headers: { 'Content-Type': mimeType, 'Content-Length': String(buffer.length) },
-            body: buffer,
-        });
-        if (!uploadRes.ok) {
-            console.log('[IMAGE] Upload to staged URL failed:', uploadRes.status);
-            return undefined;
-        }
-
-        // Step 3: Create a file record in Shopify to get a permanent URL
-        const fileRes = await fetch(`https://${SHOPIFY_STORE}/admin/api/2025-10/graphql.json`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Shopify-Access-Token': accessToken,
-            },
-            body: JSON.stringify({
-                query: `mutation fileCreate($files: [FileCreateInput!]!) {
-                    fileCreate(files: $files) {
-                        files { id alt preview { image { url } } }
-                        userErrors { field message }
-                    }
-                }`,
-                variables: {
-                    files: [{
-                        originalSource: target.resourceUrl,
-                        alt: 'Custom Chase Cover Preview',
-                        contentType: 'IMAGE',
-                    }],
-                },
-            }),
-        });
-        const fileData = await fileRes.json();
-        const imageUrl = fileData?.data?.fileCreate?.files?.[0]?.preview?.image?.url;
-        console.log('[IMAGE] Shopify file created:', imageUrl ? 'success' : 'no url', JSON.stringify(fileData?.data?.fileCreate?.userErrors));
-        return imageUrl || undefined;
-    } catch (err: any) {
-        console.log('[IMAGE] Upload error (non-fatal):', err.message);
-        return undefined;
-    }
-}
-
-/**
- * Update the Shopify product's image so the draft order checkout shows the 3D preview.
- * Creates a new product image from the base64 data, then removes any old images.
- * Returns the new image URL or undefined on failure.
- */
-async function updateProductImage(productId: string, base64DataUrl: string, accessToken: string): Promise<string | undefined> {
-    try {
-        const match = base64DataUrl.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/);
-        if (!match) return undefined;
-        const base64Data = match[2];
-        const ext = match[1];
-
-        // Create new product image directly from base64
-        const createRes = await fetch(
-            `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images.json`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Shopify-Access-Token': accessToken,
-                },
-                body: JSON.stringify({
-                    image: {
-                        attachment: base64Data,
-                        filename: `chase-cover-${Date.now()}.${ext}`,
-                    },
-                }),
-            }
-        );
-
-        if (!createRes.ok) {
-            const errorText = await createRes.text();
-            console.log('[IMAGE] Product image create failed:', createRes.status, errorText);
-            return undefined;
-        }
-
-        const createData = await createRes.json();
-        const newImageId = createData?.image?.id;
-        const imageUrl = createData?.image?.src;
-        console.log('[IMAGE] Product image created:', imageUrl ? 'success' : 'no url');
-
-        // Clean up old images to prevent accumulation (non-blocking, fire-and-forget)
-        if (newImageId) {
-            (async () => {
-                try {
-                    const listRes = await fetch(
-                        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images.json`,
-                        { headers: { 'X-Shopify-Access-Token': accessToken } }
-                    );
-                    if (listRes.ok) {
-                        const listData = await listRes.json();
-                        const oldImages = (listData?.images || []).filter((img: any) => img.id !== newImageId);
-                        for (const img of oldImages) {
-                            fetch(
-                                `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images/${img.id}.json`,
-                                { method: 'DELETE', headers: { 'X-Shopify-Access-Token': accessToken } }
-                            ).catch(() => {});
-                        }
-                    }
-                } catch { /* ignore cleanup errors */ }
-            })();
-        }
-
-        return imageUrl;
-    } catch (err: any) {
-        console.log('[IMAGE] Product image update error (non-fatal):', err.message);
-        return undefined;
-    }
-}
-
 async function fetchPricingFromSheet() {
     return fetchPricingFromPublicSheet(GOOGLE_SHEET_ID, 'pricing');
-}
-
-function computePrice(config: OrderConfig, p: Awaited<ReturnType<typeof fetchPricingFromSheet>>): number {
-    const base = p.AREA_RATE * config.w * config.l + p.LINEAR_RATE * (config.w + config.l) + p.BASE_FIXED;
-
-    // Storm collar cost: one collar per hole where stormCollar is enabled
-    let stormCollarCost = 0;
-    const collars = [config.collarA, config.collarB, config.collarC];
-    for (let i = 0; i < config.holes; i++) {
-        const c = collars[i];
-        if (c?.stormCollar) stormCollarCost += getStormCollarPrice(c.dia, p.STORM_COLLAR_PRICES ?? {});
-    }
-
-    const subtotal = base
-        + config.holes * p.HOLE_PRICE
-        + (config.sk >= p.SKIRT_THRESHOLD ? p.SKIRT_SURCHARGE : 0)
-        + (config.pc && config.mat !== 'copper' ? p.POWDER_COAT : 0)
-        + stormCollarCost;
-    return subtotal * (p.GAUGE_MULT[config.gauge] || 1) * (p.MATERIAL_MULT[config.mat] || 1);
 }
 
 // Common color name lookup — best-effort from hex
@@ -381,6 +219,11 @@ function getColorName(hex: string): string {
     if (r >= g && r >= b) return g > 150 ? 'Orange' : 'Red';
     if (g >= r && g >= b) return 'Green';
     return 'Blue';
+}
+
+function getMaterialLabel(material: string): string {
+    if (material === 'copper') return 'Copper';
+    return 'Stainless Steel';
 }
 
 function formatFrac(n: number): string {
@@ -436,7 +279,7 @@ function buildHoleProperties(config: OrderConfig): { name: string; value: string
 function buildLineItemDescription(config: OrderConfig): string {
     const lines: string[] = [];
     lines.push(`${formatFrac(config.l)}" L × ${formatFrac(config.w)}" W × ${formatFrac(config.sk)}" Skirt`);
-    lines.push(`Material: ${config.mat === 'copper' ? 'Copper' : 'Galvanized'} | Gauge: ${config.gauge}ga`);
+    lines.push(`Material: ${getMaterialLabel(config.mat)} | Gauge: ${config.gauge}ga`);
     lines.push(`Drip Edge: ${config.drip ? 'Yes' : 'No'} | Diagonal Crease: ${config.diag ? 'Yes' : 'No'}`);
     if (config.pc) lines.push(`Powder Coat: ${getColorName(config.pcCol)} (${config.pcCol})`);
 
@@ -476,7 +319,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         const config: OrderConfig = req.body;
+        console.log('[DEBUG] Request context:', {
+            origin: req.headers.origin || null,
+            referer: req.headers.referer || null,
+            host: req.headers.host || null,
+            userAgent: req.headers['user-agent'] || null,
+        });
         console.log('[DEBUG] Handler request body:', JSON.stringify(config));
+
+        applyShopifyCatalogFallbacks(config);
+        console.log('[DEBUG] Effective Shopify IDs after fallbacks:', {
+            productId: config.shopifyProductId || null,
+            variantId: config.shopifyVariantId || null,
+            envProductId: SHOPIFY_PRODUCT_ID || null,
+            envVariantId: SHOPIFY_VARIANT_ID || null,
+        });
 
         // Validate required fields
         if (!config.w || !config.l || !config.sk || !config.mat || !config.gauge) {
@@ -494,39 +351,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // 2. Fetch pricing from Google Sheet (server-side — tamper-proof)
         // 3. Calculate price server-side
-        const unitPrice = computePrice(config, pricing);
+        let stormCollarCost = 0;
+        const collars = [config.collarA, config.collarB, config.collarC];
+        for (let i = 0; i < config.holes; i++) {
+            const c = collars[i];
+            if (c?.stormCollar) stormCollarCost += getStormCollarPrice(c.dia, pricing.STORM_COLLAR_PRICES ?? {});
+        }
+
+        const pricingBreakdown = computePricingBreakdown(config, pricing, stormCollarCost);
+        const unitPrice = pricingBreakdown.total;
         console.log('[DEBUG] Calculated unitPrice:', unitPrice);
+        console.log('[DEBUG] Pricing breakdown:', { ...pricingBreakdown, paintedEnabled: config.pc });
         const quantity = Math.max(1, Math.min(99, Math.round(config.quantity || 1)));
+        console.log('[DEBUG] Draft order linkage summary:', {
+            productId: config.shopifyProductId || null,
+            variantId: config.shopifyVariantId || null,
+            quantity,
+            hasImage: false,
+        });
 
         // 4. Build human-readable description
         const description = buildLineItemDescription(config);
 
-        // 4b. Upload preview image to Shopify (non-blocking — won't fail the order)
-        let previewImageUrl: string | undefined;
-        if (config.image) {
-            console.log('[DEBUG] Uploading preview image...');
-
-            // Try updating the product image first (so checkout shows the thumbnail)
-            if (config.shopifyProductId) {
-                previewImageUrl = await Promise.race<string | undefined>([
-                    updateProductImage(String(config.shopifyProductId), config.image, shopifyAccessToken),
-                    wait(8000).then(() => undefined),
-                ]);
-                console.log('[DEBUG] Product image update:', previewImageUrl ? 'success' : '(failed, trying file upload fallback)');
-            }
-
-            // Fallback to staged file upload if product image update failed or no product ID
-            if (!previewImageUrl) {
-                previewImageUrl = await Promise.race<string | undefined>([
-                    uploadImageToShopify(config.image, shopifyAccessToken),
-                    wait(2000).then(() => undefined),
-                ]);
-            }
-
-            console.log('[DEBUG] Preview image URL:', previewImageUrl || '(upload failed, continuing without image)');
-        }
-
         // 5. Create Shopify Draft Order via Admin API
+        const lineItemProperties = [
+            { name: 'Dimensions', value: `${formatFrac(config.l)}" L × ${formatFrac(config.w)}" W × ${formatFrac(config.sk)}" Skirt` },
+            { name: 'Material & Gauge', value: `${getMaterialLabel(config.mat)} — ${config.gauge}ga` },
+            { name: 'Options', value: `Drip Edge: ${config.drip ? 'Yes' : 'No'} · Diagonal Crease: ${config.diag ? 'Yes' : 'No'}` },
+            ...(config.pc && config.mat !== 'copper' ? [{ name: 'Powder Coat', value: `${getColorName(config.pcCol)} (${config.pcCol})` }] : []),
+            { name: 'Holes', value: `${config.holes}` },
+            ...buildHoleProperties(config),
+            ...(config.notes ? [{ name: 'Special Notes', value: config.notes }] : []),
+            ...(config.shopifyProductId ? [{ name: '_shopify_product_id', value: String(config.shopifyProductId) }] : []),
+            ...(config.shopifyVariantId ? [{ name: '_shopify_variant_id', value: String(config.shopifyVariantId) }] : []),
+            { name: '_config_json', value: JSON.stringify({ ...config, image: undefined }) },
+        ];
+
         const draftOrderPayload = {
             draft_order: {
                 line_items: [
@@ -536,25 +396,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         quantity: quantity,
                         requires_shipping: true,
                         taxable: true,
-                        ...(config.shopifyVariantId ? { variant_id: Number(config.shopifyVariantId) } : {}),
-                        ...(config.shopifyProductId && !config.shopifyVariantId ? { product_id: Number(config.shopifyProductId) } : {}),
-                        properties: [
-                            { name: 'Dimensions', value: `${formatFrac(config.l)}" L × ${formatFrac(config.w)}" W × ${formatFrac(config.sk)}" Skirt` },
-                            { name: 'Material & Gauge', value: `${config.mat === 'copper' ? 'Copper' : 'Galvanized'} — ${config.gauge}ga` },
-                            { name: 'Options', value: `Drip Edge: ${config.drip ? 'Yes' : 'No'} · Diagonal Crease: ${config.diag ? 'Yes' : 'No'}` },
-                            ...(config.pc && config.mat !== 'copper' ? [{ name: 'Powder Coat', value: `${getColorName(config.pcCol)} (${config.pcCol})` }] : []),
-                            { name: 'Holes', value: `${config.holes}` },
-                            ...buildHoleProperties(config),
-                            ...(config.notes ? [{ name: 'Special Notes', value: config.notes }] : []),
-                            ...(previewImageUrl ? [{ name: '_preview_image', value: previewImageUrl }] : []),
-                            { name: '_config_json', value: JSON.stringify({ ...config, image: undefined }) },
-                        ],
+                        properties: lineItemProperties,
                     },
                 ],
-                note: description + (previewImageUrl ? `\n\nPreview: ${previewImageUrl}` : ''),
+                note: description,
                 use_customer_default_address: true,
             },
         };
+        console.log('[DEBUG] Draft order line item mode:', {
+            customLineItem: true,
+            linkedProductId: config.shopifyProductId || null,
+            linkedVariantId: config.shopifyVariantId || null,
+            propertyCount: lineItemProperties.length,
+        });
         console.log('[DEBUG] Draft Order Payload:', JSON.stringify(draftOrderPayload));
 
         console.log('[DEBUG] Sending request to Shopify...');

@@ -21,6 +21,96 @@ interface AppProps {
   variantId?: string;
 }
 
+interface ShopifyCart {
+  item_count?: number;
+  items?: Array<{
+    id?: number;
+    variant_id?: number;
+    quantity?: number;
+    properties?: Record<string, string>;
+  }>;
+}
+
+function normalizeShopifyId(value: unknown): string | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+  const normalized = String(value).trim();
+  return /^\d+$/.test(normalized) ? normalized : undefined;
+}
+
+function readFieldValue(element: Element | null): string | undefined {
+  if (!element) return undefined;
+  if (element instanceof HTMLInputElement || element instanceof HTMLSelectElement) {
+    return normalizeShopifyId(element.value);
+  }
+  return normalizeShopifyId(element.getAttribute('value'));
+}
+
+function getConfiguratorHost(appLayout: HTMLDivElement | null): HTMLElement | null {
+  const rootNode = appLayout?.getRootNode();
+  if (rootNode && 'host' in rootNode && rootNode.host instanceof HTMLElement) {
+    return rootNode.host;
+  }
+
+  return document.querySelector('chase-cover-configurator, chase-configurator, #chase-cover-configurator-mount, #chase-configurator-mount');
+}
+
+function getShopifyMetaProduct(): any {
+  const shopifyWindow = window as Window & {
+    meta?: { product?: any };
+    ShopifyAnalytics?: { meta?: { product?: any; selectedVariantId?: string | number } };
+  };
+
+  return shopifyWindow.meta?.product || shopifyWindow.ShopifyAnalytics?.meta?.product;
+}
+
+function resolveRuntimeShopifyIds(initialProductId?: string, initialVariantId?: string, appLayout?: HTMLDivElement | null) {
+  const host = getConfiguratorHost(appLayout ?? null);
+  const params = new URLSearchParams(window.location.search);
+  const metaProduct = getShopifyMetaProduct();
+  const shopifyWindow = window as Window & {
+    ShopifyAnalytics?: { meta?: { selectedVariantId?: string | number } };
+  };
+
+  const productSources = [
+    { source: 'prop', value: normalizeShopifyId(initialProductId) },
+    { source: 'mount-attribute', value: normalizeShopifyId(host?.getAttribute('product-id') || undefined) },
+    { source: 'shopify-meta-product', value: normalizeShopifyId(metaProduct?.id) },
+  ];
+
+  const variantSources = [
+    { source: 'prop', value: normalizeShopifyId(initialVariantId) },
+    { source: 'mount-attribute', value: normalizeShopifyId(host?.getAttribute('variant-id') || undefined) },
+    { source: 'url-query-variant', value: normalizeShopifyId(params.get('variant') || undefined) },
+    { source: 'cart-form', value: readFieldValue(document.querySelector('form[action*="/cart/add"] [name="id"]')) },
+    { source: 'product-form', value: readFieldValue(document.querySelector('product-form [name="id"]')) },
+    { source: 'data-product-form', value: readFieldValue(document.querySelector('[data-product-form] [name="id"]')) },
+    { source: 'hidden-input', value: readFieldValue(document.querySelector('input[name="id"][type="hidden"]')) },
+    { source: 'variant-select', value: readFieldValue(document.querySelector('select[name="id"]')) },
+    { source: 'shopify-analytics-selected', value: normalizeShopifyId(shopifyWindow.ShopifyAnalytics?.meta?.selectedVariantId) },
+    { source: 'shopify-meta-selectedVariantId', value: normalizeShopifyId(metaProduct?.selectedVariantId) },
+    { source: 'shopify-meta-selected-or-first', value: normalizeShopifyId(metaProduct?.selected_or_first_available_variant?.id) },
+    { source: 'shopify-meta-selected', value: normalizeShopifyId(metaProduct?.selected_variant?.id) },
+    { source: 'shopify-meta-first-variant', value: normalizeShopifyId(metaProduct?.variants?.[0]?.id) },
+  ];
+
+  const resolvedProduct = productSources.find((entry) => entry.value);
+  const resolvedVariant = variantSources.find((entry) => entry.value);
+
+  return {
+    productId: resolvedProduct?.value,
+    variantId: resolvedVariant?.value,
+    debug: {
+      hostTag: host?.tagName?.toLowerCase() || null,
+      path: window.location.pathname,
+      search: window.location.search,
+      productSource: resolvedProduct?.source || null,
+      variantSource: resolvedVariant?.source || null,
+      productSources,
+      variantSources,
+    },
+  };
+}
+
 function formatHoleSummary(code: 'A' | 'B' | 'C', index: number, collar: CollarState) {
   const size = getHoleSizeInches(collar);
   const label = `H${index}`;
@@ -37,6 +127,74 @@ function formatHoleCutoutSummary(code: 'A' | 'B' | 'C', config: ReturnType<typeo
   const hole = holeWorld(code, config);
   const offsets = getHoleEdgeOffsets(hole, config);
   return `[${code}1(Top): ${formatFrac(offsets.top)}\" ${code}2(Right): ${formatFrac(offsets.right)}\" ${code}3(Bottom): ${formatFrac(offsets.bottom)}\" ${code}4(Left): ${formatFrac(offsets.left)}\"]`;
+}
+
+function updateCartBadgeCount(itemCount: number) {
+  const selectors = [
+    '[data-cart-count]',
+    '[data-cart-count-bubble]',
+    '.cart-count-bubble',
+    '.cart-count',
+    '.site-header__cart-count',
+    '.header__icon--cart .count-bubble',
+  ];
+
+  for (const selector of selectors) {
+    for (const element of document.querySelectorAll(selector)) {
+      if (!(element instanceof HTMLElement)) continue;
+      element.hidden = false;
+      element.textContent = String(itemCount);
+    }
+  }
+}
+
+function dispatchCartSyncEvents(cart: ShopifyCart | null) {
+  const detail = { cart };
+  const eventNames = ['cart:refresh', 'cart:updated', 'cart:update', 'cart:change'];
+
+  for (const eventName of eventNames) {
+    const event = new CustomEvent(eventName, { detail });
+    document.documentElement.dispatchEvent(event);
+    document.dispatchEvent(new CustomEvent(eventName, { detail }));
+    window.dispatchEvent(new CustomEvent(eventName, { detail }));
+  }
+}
+
+function tryOpenCartUi() {
+  const selectors = [
+    '[data-cart-toggle]',
+    '.cart-icon-bubble',
+    '.js-drawer-open-cart',
+    '.header__icon--cart button',
+    '.site-header__cart',
+    'button[aria-controls*="CartDrawer"]',
+    '[href="/cart"]',
+  ];
+
+  const detailsDrawer = document.querySelector('details[id*="CartDrawer"], details[data-cart-drawer]') as HTMLDetailsElement | null;
+  if (detailsDrawer) {
+    detailsDrawer.open = true;
+    return true;
+  }
+
+  const cartDrawer = document.querySelector('cart-drawer, cart-notification, [id*="CartDrawer"]') as (HTMLElement & { open?: () => void; show?: () => void }) | null;
+  if (cartDrawer) {
+    cartDrawer.setAttribute('open', '');
+    cartDrawer.classList.add('active', 'is-open');
+    if (typeof cartDrawer.open === 'function') cartDrawer.open();
+    if (typeof cartDrawer.show === 'function') cartDrawer.show();
+    return true;
+  }
+
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    if (element instanceof HTMLElement) {
+      element.click();
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export default function App({ productId, variantId }: AppProps = {}) {
@@ -60,6 +218,13 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const appLayoutRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    console.log('Configurator app boot props:', {
+      productId: productId || null,
+      variantId: variantId || null,
+      path: window.location.pathname,
+      search: window.location.search,
+    });
+
     const hash = window.location.hash;
     if (hash.startsWith('#ar=')) {
       // AR config takes priority — don't restore from cart
@@ -354,19 +519,16 @@ export default function App({ productId, variantId }: AppProps = {}) {
               return;
             }
 
+            let shouldResetSubmitting = true;
             try {
               setIsSubmitting(true);
               setSubmittingAction('cart');
 
-              // Capture 3D viewer screenshot
-              let imageBase64: string | undefined;
-              try {
-                const root = appLayoutRef.current?.closest('.chase-cover-configurator-root') || document;
-                const canvas = (root as Element).querySelector?.('canvas') ?? document.querySelector('.viewport canvas');
-                if (canvas && canvas instanceof HTMLCanvasElement) {
-                  imageBase64 = canvas.toDataURL('image/png', 0.85);
-                }
-              } catch { /* ignore capture errors */ }
+              const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
+              console.log('Resolved Shopify IDs for cart:', resolvedShopifyIds);
+              if (!resolvedShopifyIds.variantId) {
+                console.warn('No Shopify variant ID resolved for cart submission.', resolvedShopifyIds.debug);
+              }
 
               const payload = {
                 w: config.w, l: config.l, sk: config.sk,
@@ -382,9 +544,8 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 holeCutoutC: config.holes >= 3 ? formatHoleCutoutSummary('C', config) : undefined,
                 quantity: config.quantity,
                 notes: config.notes,
-                shopifyProductId: productId,
-                shopifyVariantId: variantId,
-                image: imageBase64,
+                shopifyProductId: resolvedShopifyIds.productId,
+                shopifyVariantId: resolvedShopifyIds.variantId,
               };
 
               // Step 1: Call our API to calculate price + update variant
@@ -419,30 +580,67 @@ export default function App({ productId, variantId }: AppProps = {}) {
               });
 
               if (!cartRes.ok) {
-                const cartError = await cartRes.text();
-                console.error('Shopify cart add error:', cartRes.status, cartError);
-                throw new Error('Failed to add item to cart');
+                const cartErrorText = await cartRes.text();
+                let cartMessage = 'Failed to add item to cart';
+                try {
+                  const cartErrorJson = JSON.parse(cartErrorText);
+                  cartMessage = cartErrorJson?.description || cartErrorJson?.message || cartMessage;
+                } catch {
+                  if (cartErrorText) cartMessage = cartErrorText;
+                }
+                console.error('Shopify cart add error:', cartRes.status, cartErrorText);
+                throw new Error(cartMessage);
               }
 
-              // Step 3: Open the cart drawer / refresh cart UI
-              // Try common Shopify theme methods to open the cart drawer
-              try {
-                // Dawn and many themes listen for this event
-                document.documentElement.dispatchEvent(new CustomEvent('cart:refresh'));
-                // Also try triggering a click on the cart icon to open the drawer
-                const cartIcon = document.querySelector('[data-cart-toggle], .cart-icon-bubble, .js-drawer-open-cart, a[href="/cart"], .header__icon--cart button, .site-header__cart') as HTMLElement | null;
-                if (cartIcon) cartIcon.click();
-              } catch { /* ignore */ }
+              // Step 3: Verify the cart actually updated before navigating away.
+              const verifiedCartRes = await fetch('/cart.js', {
+                headers: { Accept: 'application/json' },
+                cache: 'no-store',
+              });
 
-              // Show a brief success feedback
-              alert('Added to cart!');
+              const verifiedCart = await verifiedCartRes.json().catch(() => null) as ShopifyCart | null;
+              console.log('Verified storefront cart after add:', {
+                status: verifiedCartRes.status,
+                itemCount: verifiedCart?.item_count ?? null,
+                variantId: data.variantId,
+              });
+
+              if (!verifiedCartRes.ok || !verifiedCart || typeof verifiedCart.item_count !== 'number') {
+                throw new Error('Shopify cart could not be verified after add.');
+              }
+
+              const addedVariantId = Number(data.variantId);
+              const variantPresent = !!verifiedCart.items?.some((item) => {
+                const itemVariantId = Number(item.variant_id ?? item.id);
+                return Number.isFinite(itemVariantId) && itemVariantId === addedVariantId;
+              });
+
+              if (!variantPresent) {
+                console.warn('Added variant was not found in verified cart payload.', {
+                  addedVariantId,
+                  cart: verifiedCart,
+                });
+              }
+
+              updateCartBadgeCount(verifiedCart.item_count);
+              dispatchCartSyncEvents(verifiedCart);
+              tryOpenCartUi();
+
+              // The host theme drawer is not reliably reactive, so finish with a hard
+              // cart-page navigation to guarantee the customer sees the fresh cart state.
+              saveConfigForRestore();
+              shouldResetSubmitting = false;
+              window.location.assign('/cart');
+              return;
 
             } catch (err: any) {
               console.error('Add to cart error:', err);
               alert(`Failed to add to cart: ${err.message}`);
             } finally {
-              setIsSubmitting(false);
-              setSubmittingAction(null);
+              if (shouldResetSubmitting) {
+                setIsSubmitting(false);
+                setSubmittingAction(null);
+              }
             }
           }}
           onBuyNow={async () => {
@@ -453,19 +651,16 @@ export default function App({ productId, variantId }: AppProps = {}) {
               return;
             }
 
+            let shouldResetSubmitting = true;
             try {
               setIsSubmitting(true);
               setSubmittingAction('buy');
 
-              // Capture 3D viewer screenshot
-              let imageBase64: string | undefined;
-              try {
-                const root = appLayoutRef.current?.closest('.chase-cover-configurator-root') || document;
-                const canvas = (root as Element).querySelector?.('canvas') ?? document.querySelector('.viewport canvas');
-                if (canvas && canvas instanceof HTMLCanvasElement) {
-                  imageBase64 = canvas.toDataURL('image/png', 0.85);
-                }
-              } catch { /* ignore capture errors */ }
+              const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
+              console.log('Resolved Shopify IDs for checkout:', resolvedShopifyIds);
+              if (!resolvedShopifyIds.variantId) {
+                console.warn('No Shopify variant ID resolved for express checkout submission.', resolvedShopifyIds.debug);
+              }
 
               const payload = {
                 w: config.w, l: config.l, sk: config.sk,
@@ -481,9 +676,8 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 holeCutoutC: config.holes >= 3 ? formatHoleCutoutSummary('C', config) : undefined,
                 quantity: config.quantity,
                 notes: config.notes,
-                shopifyProductId: productId,
-                shopifyVariantId: variantId,
-                image: imageBase64,
+                shopifyProductId: resolvedShopifyIds.productId,
+                shopifyVariantId: resolvedShopifyIds.variantId,
               };
 
               const res = await fetch(`${apiBase}/api/create-order`, {
@@ -500,7 +694,9 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
               if (data?.checkout_url) {
                 saveConfigForRestore();
+                shouldResetSubmitting = false;
                 window.location.href = data.checkout_url;
+                return;
               } else {
                 throw new Error(data?.error || 'No checkout URL returned');
               }
@@ -508,8 +704,10 @@ export default function App({ productId, variantId }: AppProps = {}) {
               console.error('Buy now error:', err);
               alert(`Failed to create order: ${err.message}`);
             } finally {
-              setIsSubmitting(false);
-              setSubmittingAction(null);
+              if (shouldResetSubmitting) {
+                setIsSubmitting(false);
+                setSubmittingAction(null);
+              }
             }
           }}
         />

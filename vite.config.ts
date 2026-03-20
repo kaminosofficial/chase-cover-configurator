@@ -101,7 +101,10 @@ export default defineConfig(({ mode }) => {
         'process.env': JSON.stringify({}),
       }),
     },
-    build: getBuildConfig(isVercel, buildTarget),
+    build: {
+      chunkSizeWarningLimit: 1500,
+      ...getBuildConfig(isVercel, buildTarget),
+    },
     server: {
       port: 5173,
       host: true,
