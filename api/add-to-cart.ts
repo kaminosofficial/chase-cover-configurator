@@ -297,111 +297,59 @@ async function createVariant(
             const createdMgmt = parsed?.variant?.inventory_management;
             console.log('[CART] Variant created:', { variantId: vid, price, optionValue, inventoryItemId, createdPolicy, createdMgmt });
 
-            // Step A: Update variant to ensure inventory_policy=continue
-            try {
-                const updateRes = await fetch(
-                    `https://${SHOPIFY_STORE}/admin/api/2025-10/variants/${vid}.json`,
-                    {
-                        method: 'PUT',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Shopify-Access-Token': accessToken,
-                        },
-                        body: JSON.stringify({
-                            variant: { id: Number(vid), inventory_policy: 'continue' },
-                        }),
-                    }
-                );
-                const updateData = await updateRes.json().catch(() => null);
-                console.log('[CART] Step A - variant PUT:', {
-                    ok: updateRes.ok,
-                    status: updateRes.status,
-                    resultPolicy: updateData?.variant?.inventory_policy,
-                    resultMgmt: updateData?.variant?.inventory_management,
-                });
-            } catch (err: any) {
-                console.warn('[CART] Step A failed:', err.message);
-            }
+            const t0 = Date.now();
 
-            // Step B: Try to disable inventory tracking (needs write_inventory scope)
-            if (inventoryItemId) {
-                try {
-                    const invRes = await fetch(
-                        `https://${SHOPIFY_STORE}/admin/api/2025-10/inventory_items/${inventoryItemId}.json`,
-                        {
-                            method: 'PUT',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-Shopify-Access-Token': accessToken,
-                            },
-                            body: JSON.stringify({ inventory_item: { tracked: false } }),
-                        }
-                    );
-                    const invData = await invRes.json().catch(() => null);
-                    console.log('[CART] Step B - inventory item:', {
-                        ok: invRes.ok,
-                        status: invRes.status,
-                        tracked: invData?.inventory_item?.tracked,
-                    });
-                } catch (err: any) {
-                    console.warn('[CART] Step B failed:', err.message);
+            // Run inventory fixes in PARALLEL for speed
+            const stepA = fetch(
+                `https://${SHOPIFY_STORE}/admin/api/2025-10/variants/${vid}.json`,
+                {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+                    body: JSON.stringify({ variant: { id: Number(vid), inventory_policy: 'continue' } }),
                 }
-            }
+            ).then(async r => {
+                const d = await r.json().catch(() => null);
+                console.log('[CART] Step A (variant PUT):', { ok: r.ok, ms: Date.now() - t0, policy: d?.variant?.inventory_policy });
+            }).catch(e => console.warn('[CART] Step A failed:', e.message));
 
-            // Step C: Try to set inventory level to high number at first location
-            if (inventoryItemId) {
+            const stepB = inventoryItemId ? fetch(
+                `https://${SHOPIFY_STORE}/admin/api/2025-10/inventory_items/${inventoryItemId}.json`,
+                {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+                    body: JSON.stringify({ inventory_item: { tracked: false } }),
+                }
+            ).then(async r => {
+                const d = await r.json().catch(() => null);
+                console.log('[CART] Step B (tracked=false):', { ok: r.ok, ms: Date.now() - t0, tracked: d?.inventory_item?.tracked });
+            }).catch(e => console.warn('[CART] Step B failed:', e.message)) : Promise.resolve();
+
+            // Step C: get location then set inventory (these two are sequential but run in parallel with A+B)
+            const stepC = inventoryItemId ? (async () => {
                 try {
-                    // Get first location
                     const locRes = await fetch(
                         `https://${SHOPIFY_STORE}/admin/api/2025-10/locations.json?limit=1`,
                         { headers: { 'X-Shopify-Access-Token': accessToken } }
                     );
                     const locData = await locRes.json().catch(() => null);
                     const locationId = locData?.locations?.[0]?.id;
-                    if (locationId) {
-                        const setRes = await fetch(
-                            `https://${SHOPIFY_STORE}/admin/api/2025-10/inventory_levels/set.json`,
-                            {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'X-Shopify-Access-Token': accessToken,
-                                },
-                                body: JSON.stringify({
-                                    location_id: locationId,
-                                    inventory_item_id: inventoryItemId,
-                                    available: 9999,
-                                }),
-                            }
-                        );
-                        const setData = await setRes.json().catch(() => null);
-                        console.log('[CART] Step C - inventory level set:', {
-                            ok: setRes.ok,
-                            status: setRes.status,
-                            available: setData?.inventory_level?.available,
-                            locationId,
-                        });
-                    }
-                } catch (err: any) {
-                    console.warn('[CART] Step C failed:', err.message);
-                }
-            }
+                    if (!locationId) { console.warn('[CART] Step C: no location found'); return; }
 
-            // Step D: Verify the final state of the variant
-            try {
-                const verifyRes = await fetch(
-                    `https://${SHOPIFY_STORE}/admin/api/2025-10/variants/${vid}.json`,
-                    { headers: { 'X-Shopify-Access-Token': accessToken } }
-                );
-                const verifyData = await verifyRes.json().catch(() => null);
-                console.log('[CART] Step D - verification:', {
-                    inventory_policy: verifyData?.variant?.inventory_policy,
-                    inventory_management: verifyData?.variant?.inventory_management,
-                    inventory_quantity: verifyData?.variant?.inventory_quantity,
-                });
-            } catch (err: any) {
-                console.warn('[CART] Step D failed:', err.message);
-            }
+                    const setRes = await fetch(
+                        `https://${SHOPIFY_STORE}/admin/api/2025-10/inventory_levels/set.json`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+                            body: JSON.stringify({ location_id: locationId, inventory_item_id: inventoryItemId, available: 9999 }),
+                        }
+                    );
+                    const setData = await setRes.json().catch(() => null);
+                    console.log('[CART] Step C (inventory=9999):', { ok: setRes.ok, ms: Date.now() - t0, available: setData?.inventory_level?.available });
+                } catch (e: any) { console.warn('[CART] Step C failed:', e.message); }
+            })() : Promise.resolve();
+
+            await Promise.all([stepA, stepB, stepC]);
+            console.log('[CART] All inventory steps done in', Date.now() - t0, 'ms');
 
             return { ok: true, variantId: vid };
         }
@@ -457,12 +405,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
     try {
+        const handlerStart = Date.now();
         const config: OrderConfig = req.body;
-        console.log('[CART] Request context:', {
-            origin: req.headers.origin || null,
-            referer: req.headers.referer || null,
-            host: req.headers.host || null,
-        });
         console.log('[CART] Add-to-cart request received, productId:', config.shopifyProductId);
 
         applyProductIdFallback(config);
@@ -478,7 +422,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             fetchPricingFromSheet(),
         ]);
 
-        console.log('[CART] Auth OK, store:', SHOPIFY_STORE);
+        console.log('[CART] Auth+pricing done in', Date.now() - handlerStart, 'ms');
 
         // 2. Resolve product ID if missing
         if (!config.shopifyProductId) {
@@ -512,6 +456,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 3. Calculate price server-side
+        const priceStart = Date.now();
         let stormCollarCost = 0;
         const collars = [config.collarA, config.collarB, config.collarC];
         for (let i = 0; i < config.holes; i++) {
@@ -523,9 +468,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const unitPrice = pricingBreakdown.total;
         const priceStr = unitPrice.toFixed(2);
         console.log('[CART] Pricing breakdown:', { ...pricingBreakdown, paintedEnabled: config.pc });
-        console.log('[CART] Calculated price:', priceStr);
+        console.log('[CART] Price computed in', Date.now() - priceStart, 'ms:', priceStr);
 
         // 4. Create a new variant with the exact price
+        const createStart = Date.now();
         const firstAttempt = await createVariant(config.shopifyProductId, priceStr, accessToken);
         let variantId: string | undefined = firstAttempt.variantId;
         let lastError: string = firstAttempt.error || '';
@@ -555,6 +501,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 5. Build the line item properties for the frontend to use with /cart/add.js
         const properties = buildCartProperties(config);
         const quantity = Math.max(1, Math.min(99, Math.round(config.quantity || 1)));
+
+        console.log('[CART] Total handler time:', Date.now() - handlerStart, 'ms (create+inventory:', Date.now() - createStart, 'ms)');
 
         return res.status(200).json({
             success: true,
