@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchPricingFromPublicSheet, getStormCollarPrice } from '../lib/pricing-sheet.js';
 import { getHoleEdgeOffsets, holeWorld } from '../src/utils/geometry.js';
 import { computePricingBreakdown } from '../src/utils/pricing.js';
+import { RAL_COLORS } from '../src/config/ralColors.js';
 
 const SHOPIFY_STORE = (process.env.SHOPIFY_STORE || '').trim();
 const SHOPIFY_ACCESS_TOKEN = (process.env.SHOPIFY_ACCESS_TOKEN || '').trim() || undefined;
@@ -128,30 +129,20 @@ function formatFrac(n: number): string {
     return `${whole} ${eighths}/8`;
 }
 
-function getColorName(hex: string): string {
-    const map: Record<string, string> = {
-        '#0b0e0f': 'Jet Black', '#000000': 'Black', '#ffffff': 'White',
-        '#940604': 'Ruby Red', '#cc0605': 'Flame Red', '#a42b26': 'Wine Red',
-        '#0e4a6b': 'Gentian Blue', '#1f4e79': 'Steel Blue', '#1d5e8c': 'Signal Blue',
-        '#354733': 'Chrome Green', '#35683a': 'Leaf Green', '#4f8c45': 'Yellow Green',
-        '#f9b000': 'Rape Yellow', '#e59800': 'Golden Yellow', '#fd9d00': 'Signal Yellow',
-        '#b8c4cc': 'Galvanized Silver', '#e09a72': 'Copper',
-    };
+/** Look up hex → RAL entry. Returns { name, ral } or null. */
+function findRalColor(hex: string): { name: string; ral: string } | null {
     const lower = hex.toLowerCase();
-    if (map[lower]) return map[lower];
-    const r = parseInt(lower.slice(1, 3), 16);
-    const g = parseInt(lower.slice(3, 5), 16);
-    const b = parseInt(lower.slice(5, 7), 16);
-    const max = Math.max(r, g, b), min = Math.min(r, g, b);
-    const lum = (max + min) / 2;
-    if (max - min < 30) {
-        if (lum < 50) return 'Black';
-        if (lum > 220) return 'White';
-        return 'Grey';
-    }
-    if (r >= g && r >= b) return g > 150 ? 'Orange' : 'Red';
-    if (g >= r && g >= b) return 'Green';
-    return 'Blue';
+    const found = RAL_COLORS.find(c => c.hex.toLowerCase() === lower);
+    return found ? { name: found.name, ral: found.ral } : null;
+}
+
+/** Format powder coat color label for Shopify line item properties.
+ *  Returns e.g. "Ruby Red (RAL 3002)" or "Custom (#940604)" if not in RAL palette. */
+function getColorLabel(hex: string): string {
+    const ral = findRalColor(hex);
+    if (ral) return `${ral.name} (${ral.ral})`;
+    // Fallback for custom/non-RAL colors: show hex
+    return `Custom Color (${hex})`;
 }
 
 function getMaterialLabel(material: string): string {
@@ -198,7 +189,7 @@ function buildCartProperties(config: OrderConfig): { key: string; value: string 
     ];
 
     if (config.pc && config.mat !== 'copper') {
-        props.push({ key: 'Powder Coat', value: `${getColorName(config.pcCol)} (${config.pcCol})` });
+        props.push({ key: 'Powder Coat', value: getColorLabel(config.pcCol) });
     }
 
     props.push({ key: 'Holes', value: `${config.holes}` });

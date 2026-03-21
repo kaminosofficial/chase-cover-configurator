@@ -827,41 +827,70 @@ export default function App({ productId, variantId }: AppProps = {}) {
               let finalSections = cartData?.sections;
               let priceWasZero = false;
 
+              let pollPriceOk = true;
+              // Detect mobile for longer poll timeout
+              const isMobile = window.innerWidth <= 767 || /Mobi|Android|iPhone/i.test(navigator.userAgent);
+              const pollTimeout = isMobile ? 8000 : 5000;
+
               if (!data.variantReused && (cartItemPrice === 0 || cartItemPrice === '0')) {
                 priceWasZero = true;
-                console.warn('[CART] Storefront returned $0 — polling for price propagation');
+                console.warn(`[CART] Storefront returned $0 — polling for price propagation (timeout=${pollTimeout}ms, mobile=${isMobile})`);
                 setSubmittingStep('cart:syncing');
                 const tPoll = performance.now();
-                const pollResult = await waitForCartPriceUpdate(drawerSectionIds, 5000);
+                const pollResult = await waitForCartPriceUpdate(drawerSectionIds, pollTimeout);
+                pollPriceOk = pollResult.priceOk;
                 console.log(`[CART] ③b Price poll: ${Math.round(performance.now() - tPoll)}ms, ok=${pollResult.priceOk}`);
                 if (pollResult.sections) finalSections = pollResult.sections;
-
-                // If still $0 after polling, schedule background refresh as last resort
-                if (!pollResult.priceOk) {
-                  scheduleBackgroundSectionRefresh();
-                }
               }
 
-              if (finalSections) applySectionUpdates(finalSections);
               console.log(`[CART] ✓ TOTAL: ${Math.round(performance.now() - t0)}ms${priceWasZero ? ' (included price poll)' : ''}`);
 
               // Step 4: Update cart UI
               const addedQty = data.quantity ?? 1;
-              // Cart item_count comes from the cart add response or the poll response
               const cartItemCount = cartData?.item_count ?? 0;
               updateCartBadgeCount(cartItemCount > 0 ? cartItemCount : addedQty);
-              dispatchCartSyncEvents(null);
 
               // Save config so navigating away and coming back restores it
               saveConfigForRestore();
 
+              // IMPORTANT: Open the drawer FIRST — on mobile, the drawer DOM is
+              // often lazy-loaded and doesn't exist until the drawer is opened.
+              // Section updates applied before the drawer opens would silently fail.
               const drawerOpened = tryOpenCartUi();
 
               if (drawerOpened) {
                 console.log('[CART] Cart drawer opened');
+                // Wait for drawer DOM to be fully inserted, then apply sections + refresh
+                await new Promise(r => setTimeout(r, 300));
+                if (finalSections) applySectionUpdates(finalSections);
+
+                // Fetch fresh cart data with real sections and dispatch events
+                // This catches cases where initial sections were stale or empty
+                try {
+                  const refreshIds = discoverCartSectionIds();
+                  const refreshUrl = refreshIds.length > 0
+                    ? `/cart.js?sections=${refreshIds.join(',')}`
+                    : '/cart.js';
+                  const refreshRes = await fetch(refreshUrl, { cache: 'no-store' });
+                  if (refreshRes.ok) {
+                    const freshCart = await refreshRes.json();
+                    if (freshCart?.sections) applySectionUpdates(freshCart.sections);
+                    dispatchCartSyncEvents(freshCart);
+                    const freshCount = freshCart?.item_count;
+                    if (freshCount) updateCartBadgeCount(freshCount);
+                    console.log('[CART] Post-open refresh applied');
+                  }
+                } catch { /* best-effort */ }
               } else {
+                // No drawer found — dispatch events then redirect to /cart
+                dispatchCartSyncEvents(null);
                 shouldResetSubmitting = false;
                 window.location.assign('/cart');
+              }
+
+              // If price was still $0 after initial poll, keep trying in background
+              if (priceWasZero && !pollPriceOk) {
+                scheduleBackgroundSectionRefresh();
               }
 
               // Step 5: Upload image in BACKGROUND — after upload completes, silently refresh
@@ -1040,9 +1069,11 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
               if (!data.variantReused && (buyItemPrice === 0 || buyItemPrice === '0')) {
                 setSubmittingStep('buy:syncing');
+                const buyIsMobile = window.innerWidth <= 767 || /Mobi|Android|iPhone/i.test(navigator.userAgent);
+                const buyPollTimeout = buyIsMobile ? 10000 : 6000;
                 const tPoll = performance.now();
-                const { priceOk } = await waitForCartPriceUpdate([], 6000);
-                console.log(`[BUY] Price poll: ${Math.round(performance.now() - tPoll)}ms, ok=${priceOk}`);
+                const { priceOk } = await waitForCartPriceUpdate([], buyPollTimeout);
+                console.log(`[BUY] Price poll: ${Math.round(performance.now() - tPoll)}ms, ok=${priceOk}, mobile=${buyIsMobile}`);
                 if (!priceOk) {
                   throw new Error('Price is still updating. Please try again in a few seconds.');
                 }
