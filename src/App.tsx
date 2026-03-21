@@ -255,17 +255,16 @@ async function waitForCartPriceUpdate(
 
 /**
  * Background polling fallback: if the drawer was opened with $0 (timeout),
- * keep polling every 2s until the price corrects, then refresh sections.
+ * keep polling every 2s until the price corrects, then dispatch events
+ * to let the theme refresh its own UI. We do NOT replace innerHTML here
+ * because that would destroy the drawer's open state and scroll lock.
  */
 function scheduleBackgroundSectionRefresh(maxRetries = 5) {
-  const sectionIds = discoverCartSectionIds();
-  if (sectionIds.length === 0) return;
-
   let retries = 0;
   const poll = async () => {
     retries++;
     try {
-      const res = await fetch(`/cart.js?sections=${sectionIds.join(',')}`, { cache: 'no-store' });
+      const res = await fetch('/cart.js', { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
 
@@ -273,10 +272,9 @@ function scheduleBackgroundSectionRefresh(maxRetries = 5) {
         (item: any) => item.final_line_price === 0 || item.price === 0
       );
 
-      if (data.sections) {
-        applySectionUpdates(data.sections);
-        console.log(`[CART] Background refresh ${retries}: updated (zeroPrice=${hasZeroPrice})`);
-      }
+      // Dispatch events so the theme refreshes its own drawer/cart UI
+      dispatchCartSyncEvents(data);
+      console.log(`[CART] Background refresh ${retries}: dispatched events (zeroPrice=${hasZeroPrice})`);
 
       if (hasZeroPrice && retries < maxRetries) {
         setTimeout(poll, 2000);
@@ -804,7 +802,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 // Only retry on sold-out/unavailable (variant propagation) — stop immediately on rate limit
                 const isSoldOut = lower.includes('sold out') || lower.includes('not available');
                 if (!isSoldOut) break;
-                console.warn(`[CART] Sold out on attempt ${attempt + 1} of ${maxAttempts}, retrying...`);
+                console.warn(`[CART] 422 on attempt ${attempt + 1} of ${maxAttempts}: ${cartErrorText.slice(0, 200)}, retrying...`);
               }
 
               if (!cartRes || !cartRes.ok) {
@@ -845,7 +843,13 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
               console.log(`[CART] ✓ TOTAL: ${Math.round(performance.now() - t0)}ms${priceWasZero ? ' (included price poll)' : ''}`);
 
-              // Step 4: Update cart UI
+              // Step 4: Apply section updates BEFORE opening the drawer.
+              // This updates the drawer HTML while it's still closed/hidden,
+              // so when it opens it already has the correct price and content.
+              // IMPORTANT: Do NOT apply sections AFTER opening — replacing innerHTML
+              // destroys the drawer's open state, event listeners, and scroll lock.
+              if (finalSections) applySectionUpdates(finalSections);
+
               const addedQty = data.quantity ?? 1;
               const cartItemCount = cartData?.item_count ?? 0;
               updateCartBadgeCount(cartItemCount > 0 ? cartItemCount : addedQty);
@@ -853,34 +857,14 @@ export default function App({ productId, variantId }: AppProps = {}) {
               // Save config so navigating away and coming back restores it
               saveConfigForRestore();
 
-              // IMPORTANT: Open the drawer FIRST — on mobile, the drawer DOM is
-              // often lazy-loaded and doesn't exist until the drawer is opened.
-              // Section updates applied before the drawer opens would silently fail.
+              // Open the cart drawer/notification
               const drawerOpened = tryOpenCartUi();
 
               if (drawerOpened) {
                 console.log('[CART] Cart drawer opened');
-                // Wait for drawer DOM to be fully inserted, then apply sections + refresh
-                await new Promise(r => setTimeout(r, 300));
-                if (finalSections) applySectionUpdates(finalSections);
-
-                // Fetch fresh cart data with real sections and dispatch events
-                // This catches cases where initial sections were stale or empty
-                try {
-                  const refreshIds = discoverCartSectionIds();
-                  const refreshUrl = refreshIds.length > 0
-                    ? `/cart.js?sections=${refreshIds.join(',')}`
-                    : '/cart.js';
-                  const refreshRes = await fetch(refreshUrl, { cache: 'no-store' });
-                  if (refreshRes.ok) {
-                    const freshCart = await refreshRes.json();
-                    if (freshCart?.sections) applySectionUpdates(freshCart.sections);
-                    dispatchCartSyncEvents(freshCart);
-                    const freshCount = freshCart?.item_count;
-                    if (freshCount) updateCartBadgeCount(freshCount);
-                    console.log('[CART] Post-open refresh applied');
-                  }
-                } catch { /* best-effort */ }
+                // Only dispatch events AFTER opening — never replace DOM while open.
+                // Events let the theme's own JS refresh the drawer content natively.
+                dispatchCartSyncEvents(cartData);
               } else {
                 // No drawer found — dispatch events then redirect to /cart
                 dispatchCartSyncEvents(null);
@@ -893,11 +877,11 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 scheduleBackgroundSectionRefresh();
               }
 
-              // Step 5: Upload image in BACKGROUND — after upload completes, silently refresh
-              // the drawer so the image appears without a full page reload.
-              // Skip if variant was reused (it already has an image from a previous session).
+              // Step 5: Upload image in BACKGROUND — fire-and-forget.
+              // We do NOT refresh drawer sections after upload because replacing
+              // innerHTML would destroy the drawer's open state and scroll lock.
+              // The image will appear on the next cart view or page load.
               if (screenshotBase64 && data.variantId && !data.variantReused) {
-                const sectionIds = discoverCartSectionIds();
                 console.log('[CART] Image upload started in background');
                 fetch(`${apiBase}/api/variant-image`, {
                   method: 'POST',
@@ -909,23 +893,19 @@ export default function App({ productId, variantId }: AppProps = {}) {
                   }),
                 }).then(async (uploadRes) => {
                   if (!uploadRes.ok) return;
-                  console.log('[CART] Image uploaded — refreshing drawer...');
-                  if (sectionIds.length > 0) {
-                    await new Promise(r => setTimeout(r, 1500));
-                    const refreshRes = await fetch(`/cart.js?sections=${sectionIds.join(',')}`, { cache: 'no-store' });
-                    if (!refreshRes.ok) return;
-                    const refreshData = await refreshRes.json();
-                    if (refreshData?.sections) {
-                      applySectionUpdates(refreshData.sections);
-                      console.log('[CART] Drawer refreshed with variant image');
-                    }
-                  }
+                  console.log('[CART] Image uploaded successfully');
+                  // Dispatch events so theme can pick up the change if it wants to
+                  dispatchCartSyncEvents(null);
                 }).catch(() => { /* ignore */ });
               }
               return;
 
             } catch (err: any) {
               console.error('[CART] Add to cart failed:', err?.message, err?.stack);
+              // Clean up any scroll lock the theme may have applied during a failed drawer open
+              document.body.style.overflow = '';
+              document.documentElement.style.overflow = '';
+              document.body.classList.remove('overflow-hidden', 'no-scroll');
               const msg = err?.message || 'Unknown error';
               alert(msg.length > 200 ? msg.slice(0, 200) + '...' : msg);
             } finally {
