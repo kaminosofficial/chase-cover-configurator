@@ -254,6 +254,53 @@ async function waitForCartPriceUpdate(
 }
 
 /**
+ * Exponential backoff with jitter for /cart/add.js retries.
+ * Only retries on "sold out" / "not available" (Shopify propagation delay).
+ * Stops immediately on rate limit (429) or other errors.
+ *
+ * 4 attempts: 0ms → ~570ms → ~1120ms → ~2260ms ≈ 4s worst case
+ * vs old linear: 0ms → 1500ms → 3000ms → 4500ms = 9s worst case
+ */
+function computeRetryDelayMs(attempt: number): number {
+  const base = Math.min(1800, 350 * (2 ** (attempt - 1)));
+  const jitter = Math.round(Math.random() * 220);
+  return base + jitter;
+}
+
+async function retryCartAdd(
+  payloadStr: string,
+  maxAttempts: number,
+  tag: string
+): Promise<{ cartRes: Response | null; cartErrorText: string; attempts: number }> {
+  let cartRes: Response | null = null;
+  let cartErrorText = '';
+  let attempts = 0;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    attempts = attempt + 1;
+    if (attempt > 0) {
+      const delay = computeRetryDelayMs(attempt);
+      console.log(`[${tag}] Retry ${attempt}/${maxAttempts - 1} — waiting ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+    cartRes = await fetch('/cart/add.js', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payloadStr,
+    });
+    if (cartRes.ok) break;
+    cartErrorText = await cartRes.text();
+    const lower = cartErrorText.toLowerCase();
+    // Only retry on sold-out/unavailable (variant propagation) — stop on anything else
+    const isSoldOut = lower.includes('sold out') || lower.includes('not available');
+    if (!isSoldOut) break;
+    console.warn(`[${tag}] 422 on attempt ${attempts} of ${maxAttempts}: ${cartErrorText.slice(0, 200)}`);
+  }
+
+  return { cartRes, cartErrorText, attempts };
+}
+
+/**
  * Background polling fallback: if the drawer was opened with $0 (timeout),
  * keep polling every 2s until the price corrects, then dispatch events
  * to let the theme refresh its own UI. We do NOT replace innerHTML here
@@ -780,75 +827,34 @@ export default function App({ productId, variantId }: AppProps = {}) {
               const t1 = performance.now();
               const cartPayloadStr = JSON.stringify(cartBody);
 
-              // Retry with backoff — only for "sold out" (storefront propagation delay).
-              // Do NOT retry on 429 (rate limit): retrying would make it worse.
-              let cartRes: Response | null = null;
-              let cartErrorText = '';
-              const maxAttempts = 4;
-              for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                if (attempt > 0) {
-                  const delay = attempt * 1500; // 1.5s, 3s, 4.5s
-                  console.log(`[CART] Retry ${attempt}/${maxAttempts - 1} — waiting ${delay}ms...`);
-                  await new Promise(r => setTimeout(r, delay));
-                }
-                cartRes = await fetch('/cart/add.js', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: cartPayloadStr,
-                });
-                if (cartRes.ok) break;
-                cartErrorText = await cartRes.text();
-                const lower = cartErrorText.toLowerCase();
-                // Only retry on sold-out/unavailable (variant propagation) — stop immediately on rate limit
-                const isSoldOut = lower.includes('sold out') || lower.includes('not available');
-                if (!isSoldOut) break;
-                console.warn(`[CART] 422 on attempt ${attempt + 1} of ${maxAttempts}: ${cartErrorText.slice(0, 200)}, retrying...`);
-              }
+              // Retry with exponential backoff + jitter — only for "sold out"
+              // (Shopify storefront propagation delay, NOT actual stock issues).
+              // 4 attempts: 0ms → ~570ms → ~1120ms → ~2260ms ≈ 4s worst case
+              // (down from 0 → 1.5s → 3s → 4.5s = 9s before)
+              const { cartRes, cartErrorText, attempts: cartAttempts } = await retryCartAdd(cartPayloadStr, 4, 'CART');
 
               if (!cartRes || !cartRes.ok) {
-                let msg = 'Failed to add item to cart';
+                let msg = 'Something went wrong — please try again in a moment.';
                 if (cartRes?.status === 429) {
                   msg = 'Too many requests — please wait a moment and try again.';
-                } else {
-                  try { msg = JSON.parse(cartErrorText)?.description || msg; } catch { /* */ }
                 }
+                // NEVER show "sold out" to the user — it's a propagation issue, not stock
+                console.error('[CART] All retries failed:', cartRes?.status, cartErrorText.slice(0, 200));
                 throw new Error(msg);
               }
               const cartData = await cartRes.json().catch(() => null);
-              console.log(`[CART] ③ /cart/add.js: ${Math.round(performance.now() - t1)}ms`);
+              const cartAddMs = Math.round(performance.now() - t1);
+              console.log(`[CART] ③ /cart/add.js: ${cartAddMs}ms (${cartAttempts} attempt${cartAttempts > 1 ? 's' : ''})`);
 
-              // Step 3: For NEW variants, check if the storefront returned $0.
-              // Shopify's cart stores variant_id+quantity — the price is re-looked-up
-              // on each /cart.js call. So we poll until ALL items have non-zero prices,
-              // THEN apply sections and open the drawer. User never sees $0.
+              // Step 3: Open drawer IMMEDIATELY — don't block on price propagation.
+              // If price is $0 (new variant, storefront hasn't caught up), sync in background.
               const cartItemPrice = cartData?.items?.[0]?.price ?? cartData?.items?.[0]?.final_line_price;
-              let finalSections = cartData?.sections;
-              let priceWasZero = false;
+              const priceWasZero = !data.variantReused && (cartItemPrice === 0 || cartItemPrice === '0');
 
-              let pollPriceOk = true;
-              // Detect mobile for longer poll timeout
-              const isMobile = window.innerWidth <= 767 || /Mobi|Android|iPhone/i.test(navigator.userAgent);
-              const pollTimeout = isMobile ? 8000 : 5000;
+              console.log(`[CART] ✓ TOTAL: ${Math.round(performance.now() - t0)}ms${priceWasZero ? ' (price sync in background)' : ''}`);
 
-              if (!data.variantReused && (cartItemPrice === 0 || cartItemPrice === '0')) {
-                priceWasZero = true;
-                console.warn(`[CART] Storefront returned $0 — polling for price propagation (timeout=${pollTimeout}ms, mobile=${isMobile})`);
-                setSubmittingStep('cart:syncing');
-                const tPoll = performance.now();
-                const pollResult = await waitForCartPriceUpdate(drawerSectionIds, pollTimeout);
-                pollPriceOk = pollResult.priceOk;
-                console.log(`[CART] ③b Price poll: ${Math.round(performance.now() - tPoll)}ms, ok=${pollResult.priceOk}`);
-                if (pollResult.sections) finalSections = pollResult.sections;
-              }
-
-              console.log(`[CART] ✓ TOTAL: ${Math.round(performance.now() - t0)}ms${priceWasZero ? ' (included price poll)' : ''}`);
-
-              // Step 4: Apply section updates BEFORE opening the drawer.
-              // This updates the drawer HTML while it's still closed/hidden,
-              // so when it opens it already has the correct price and content.
-              // IMPORTANT: Do NOT apply sections AFTER opening — replacing innerHTML
-              // destroys the drawer's open state, event listeners, and scroll lock.
-              if (finalSections) applySectionUpdates(finalSections);
+              // Apply section updates BEFORE opening the drawer (while it's hidden).
+              if (cartData?.sections) applySectionUpdates(cartData.sections);
 
               const addedQty = data.quantity ?? 1;
               const cartItemCount = cartData?.item_count ?? 0;
@@ -862,19 +868,25 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
               if (drawerOpened) {
                 console.log('[CART] Cart drawer opened');
-                // Only dispatch events AFTER opening — never replace DOM while open.
-                // Events let the theme's own JS refresh the drawer content natively.
                 dispatchCartSyncEvents(cartData);
               } else {
-                // No drawer found — dispatch events then redirect to /cart
                 dispatchCartSyncEvents(null);
                 shouldResetSubmitting = false;
                 window.location.assign('/cart');
               }
 
-              // If price was still $0 after initial poll, keep trying in background
-              if (priceWasZero && !pollPriceOk) {
-                scheduleBackgroundSectionRefresh();
+              // If price was $0, sync in background (non-blocking — drawer is already open)
+              if (priceWasZero) {
+                const isMobile = window.innerWidth <= 767 || /Mobi|Android|iPhone/i.test(navigator.userAgent);
+                const pollTimeout = isMobile ? 8000 : 5000;
+                console.warn(`[CART] Price $0 — background sync (timeout=${pollTimeout}ms, mobile=${isMobile})`);
+                waitForCartPriceUpdate(drawerSectionIds, pollTimeout)
+                  .then((pollResult) => {
+                    console.log(`[CART] Background price sync: ${pollResult.priceOk ? 'ok' : 'timeout'}`);
+                    dispatchCartSyncEvents(null);
+                    if (!pollResult.priceOk) scheduleBackgroundSectionRefresh();
+                  })
+                  .catch(() => scheduleBackgroundSectionRefresh());
               }
 
               // Step 5: Upload image in BACKGROUND — fire-and-forget.
@@ -1012,34 +1024,14 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 }],
               });
 
-              // Retry with backoff — only for "sold out" (storefront propagation delay).
-              let cartRes: Response | null = null;
-              let cartErrorText = '';
-              const buyMaxAttempts = 4;
-              for (let attempt = 0; attempt < buyMaxAttempts; attempt++) {
-                if (attempt > 0) {
-                  const delay = attempt * 1500;
-                  console.log(`[BUY] Retry ${attempt}/${buyMaxAttempts - 1} — waiting ${delay}ms...`);
-                  await new Promise(r => setTimeout(r, delay));
-                }
-                cartRes = await fetch('/cart/add.js', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: buyCartPayload,
-                });
-                if (cartRes.ok) break;
-                cartErrorText = await cartRes.text();
-                const lower = cartErrorText.toLowerCase();
-                const isSoldOut = lower.includes('sold out') || lower.includes('not available');
-                if (!isSoldOut) break;
-                console.warn(`[BUY] Sold out on attempt ${attempt + 1} of ${buyMaxAttempts}, retrying...`);
-              }
+              // Retry with exponential backoff + jitter (same as cart flow)
+              const { cartRes, cartErrorText } = await retryCartAdd(buyCartPayload, 4, 'BUY');
 
               if (!cartRes || !cartRes.ok) {
-                console.error('Buy Now cart add error:', cartRes?.status, cartErrorText);
+                console.error('[BUY] All retries failed:', cartRes?.status, cartErrorText.slice(0, 200));
                 const msg = cartRes?.status === 429
                   ? 'Too many requests — please wait a moment and try again.'
-                  : 'Failed to add item for checkout. Please try again.';
+                  : 'Something went wrong — please try again in a moment.';
                 throw new Error(msg);
               }
 
