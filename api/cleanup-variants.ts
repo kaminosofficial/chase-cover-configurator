@@ -13,9 +13,29 @@ const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
+async function getAccessToken(): Promise<string | null> {
+    if (SHOPIFY_ACCESS_TOKEN) return SHOPIFY_ACCESS_TOKEN;
+    if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) return null;
+    try {
+        const tokenRes = await fetch(`https://${SHOPIFY_STORE}/admin/oauth/access_token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                grant_type: 'client_credentials',
+                client_id: SHOPIFY_CLIENT_ID,
+                client_secret: SHOPIFY_CLIENT_SECRET,
+            }).toString(),
+        });
+        if (tokenRes.ok) {
+            const data = await tokenRes.json();
+            return data.access_token;
+        }
+    } catch { /* ignore */ }
+    return null;
+}
+
 async function resolveProductId(accessToken: string): Promise<string | null> {
     if (SHOPIFY_PRODUCT_ID) return SHOPIFY_PRODUCT_ID;
-
     try {
         const res = await fetch(
             `https://${SHOPIFY_STORE}/admin/api/2025-10/products.json?limit=50&fields=id,title`,
@@ -31,6 +51,389 @@ async function resolveProductId(accessToken: string): Promise<string | null> {
     }
 }
 
+async function listVariants(productId: string, accessToken: string) {
+    const listRes = await fetch(
+        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants.json?limit=250`,
+        { headers: { 'X-Shopify-Access-Token': accessToken } }
+    );
+    if (!listRes.ok) throw new Error(`Failed to list variants: ${listRes.status}`);
+    const data = await listRes.json();
+    return data?.variants || [];
+}
+
+async function deleteVariant(productId: string, variantId: string, accessToken: string, imageId?: number): Promise<boolean> {
+    const delRes = await fetch(
+        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants/${variantId}.json`,
+        { method: 'DELETE', headers: { 'X-Shopify-Access-Token': accessToken } }
+    );
+    if (!delRes.ok) return false;
+
+    // Also delete the variant's screenshot image so it doesn't clutter product media
+    if (imageId) {
+        const imgDel = await fetch(
+            `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images/${imageId}.json`,
+            { method: 'DELETE', headers: { 'X-Shopify-Access-Token': accessToken } }
+        );
+        if (imgDel.ok) {
+            console.log('[CLEANUP] Deleted image', imageId, 'for variant', variantId);
+        }
+    }
+    return true;
+}
+
+async function uploadProductImage(productId: string, accessToken: string, base64: string): Promise<{ imageUrl: string; imageId: number }> {
+    const buffer = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+    const filename = `chase-cover-default-${Date.now()}.png`;
+
+    // Stage the upload
+    const stageRes = await fetch(`https://${SHOPIFY_STORE}/admin/api/2025-10/graphql.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+        body: JSON.stringify({ query: `mutation { stagedUploadsCreate(input: [{ resource: PRODUCT_IMAGE filename: "${filename}" mimeType: "image/png" httpMethod: PUT }]) { stagedTargets { url resourceUrl } userErrors { field message } } }` }),
+    });
+    const stageData = await stageRes.json();
+    const target = stageData?.data?.stagedUploadsCreate?.stagedTargets?.[0];
+    if (!target?.url) throw new Error('Staged upload init failed');
+
+    // Upload binary
+    const putRes = await fetch(target.url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/png' },
+        body: buffer,
+    });
+    if (!putRes.ok) throw new Error(`Binary upload failed: ${putRes.status}`);
+
+    // Attach as product image (position 1 = featured)
+    const imgRes = await fetch(
+        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images.json`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+            body: JSON.stringify({ image: { src: target.resourceUrl, position: 1 } }),
+        }
+    );
+    const imgData = await imgRes.json();
+    if (!imgData?.image?.id) throw new Error('Product image creation failed');
+
+    // Move to position 1 (featured)
+    await fetch(
+        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images/${imgData.image.id}.json`,
+        {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+            body: JSON.stringify({ image: { id: imgData.image.id, position: 1 } }),
+        }
+    );
+
+    return { imageUrl: imgData.image.src, imageId: imgData.image.id };
+}
+
+/* ------------------------------------------------------------------ */
+/*  HTML Management UI                                                 */
+/* ------------------------------------------------------------------ */
+
+function renderManagementUI(variants: any[], productId: string, secret: string): string {
+    const now = Date.now();
+    const ccVariants = variants.filter((v: any) => String(v.option1 || '').startsWith('CC-'));
+    const nonCcVariants = variants.filter((v: any) => !String(v.option1 || '').startsWith('CC-'));
+
+    const formatAge = (createdAt: string) => {
+        const ageMs = now - new Date(createdAt).getTime();
+        const hours = Math.floor(ageMs / (1000 * 60 * 60));
+        const days = Math.floor(hours / 24);
+        if (days > 0) return `${days}d ${hours % 24}h ago`;
+        if (hours > 0) return `${hours}h ago`;
+        const mins = Math.floor(ageMs / (1000 * 60));
+        return `${mins}m ago`;
+    };
+
+    const variantRows = ccVariants.map((v: any) => `
+        <tr data-id="${v.id}">
+            <td><input type="checkbox" class="var-check" value="${v.id}" /></td>
+            <td class="mono">${v.id}</td>
+            <td>${v.option1 || '—'}</td>
+            <td>$${v.price}</td>
+            <td>${formatAge(v.created_at)}</td>
+            <td>${new Date(v.created_at).toLocaleString()}</td>
+            <td>
+                <button class="btn btn-sm btn-danger delete-one" data-id="${v.id}">Delete</button>
+            </td>
+        </tr>
+    `).join('');
+
+    const protectedRows = nonCcVariants.map((v: any) => `
+        <tr class="protected">
+            <td>🔒</td>
+            <td class="mono">${v.id}</td>
+            <td>${v.option1 || '—'}</td>
+            <td>$${v.price}</td>
+            <td>${formatAge(v.created_at)}</td>
+            <td>${new Date(v.created_at).toLocaleString()}</td>
+            <td><span class="badge">Protected</span></td>
+        </tr>
+    `).join('');
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clean Up Variants</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 20px; }
+  .container { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 24px; margin-bottom: 8px; }
+  .subtitle { color: #666; margin-bottom: 20px; }
+  .stats { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat-card { background: white; border-radius: 8px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); min-width: 150px; }
+  .stat-card .num { font-size: 28px; font-weight: 700; }
+  .stat-card .label { color: #666; font-size: 13px; }
+  .actions { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: opacity 0.2s; }
+  .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-danger { background: #e74c3c; color: white; }
+  .btn-warning { background: #f39c12; color: white; }
+  .btn-primary { background: #3498db; color: white; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #eee; font-size: 13px; }
+  th { background: #fafafa; font-weight: 600; position: sticky; top: 0; }
+  tr:hover { background: #f9f9f9; }
+  tr.protected { opacity: 0.6; }
+  .mono { font-family: 'SF Mono', Monaco, monospace; font-size: 12px; }
+  .badge { background: #27ae60; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .status { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: none; }
+  .status.success { display: block; background: #d4edda; color: #155724; }
+  .status.error { display: block; background: #f8d7da; color: #721c24; }
+  .status.info { display: block; background: #d1ecf1; color: #0c5460; }
+  #select-all { margin-right: 4px; }
+  .filter-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .filter-row label { font-size: 13px; color: #666; }
+  .filter-row select { padding: 6px 10px; border-radius: 4px; border: 1px solid #ddd; font-size: 13px; }
+  .upload-card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
+  .upload-card h2 { font-size: 16px; margin-bottom: 12px; }
+  .upload-card p { font-size: 13px; color: #666; margin-bottom: 12px; }
+  .upload-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .upload-preview { max-height: 80px; border-radius: 6px; border: 1px solid #eee; display: none; }
+  input[type=file] { font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Clean Up Variants</h1>
+  <p class="subtitle">Product ID: ${productId} · ${variants.length} total variants · ${ccVariants.length} auto-created (CC-*) · ${nonCcVariants.length} protected</p>
+
+  <div class="stats">
+    <div class="stat-card"><div class="num">${variants.length}</div><div class="label">Total Variants</div></div>
+    <div class="stat-card"><div class="num">${ccVariants.length}</div><div class="label">Auto-Created (CC-*)</div></div>
+    <div class="stat-card"><div class="num">${nonCcVariants.length}</div><div class="label">Protected</div></div>
+    <div class="stat-card"><div class="num">${100 - variants.length}</div><div class="label">Slots Remaining</div></div>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <div class="upload-card">
+    <h2>📸 Set Featured Product Image</h2>
+    <p>Upload an image to replace the current featured/default product image shown in Shopify (position 1).</p>
+    <div class="upload-row">
+      <input type="file" id="img-file" accept="image/*" />
+      <img id="img-preview" class="upload-preview" alt="preview" />
+      <button class="btn btn-primary" id="upload-img-btn" disabled>Upload as Featured Image</button>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-danger" id="delete-selected" disabled>Delete Selected (0)</button>
+    <button class="btn btn-warning" id="delete-all-cc">Delete All CC-* Variants (${ccVariants.length})</button>
+    <button class="btn btn-primary" id="run-cron">Run 3-Day Cleanup</button>
+    <span style="flex:1"></span>
+    <div class="filter-row">
+      <label>Filter:</label>
+      <select id="age-filter">
+        <option value="all">All</option>
+        <option value="1h">Older than 1 hour</option>
+        <option value="6h">Older than 6 hours</option>
+        <option value="24h">Older than 24 hours</option>
+        <option value="3d">Older than 3 days</option>
+      </select>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th><input type="checkbox" id="select-all" /></th>
+        <th>Variant ID</th>
+        <th>Option Value</th>
+        <th>Price</th>
+        <th>Age</th>
+        <th>Created</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="variant-list">
+      ${variantRows}
+      ${protectedRows}
+    </tbody>
+  </table>
+</div>
+
+<script>
+let SECRET = ${JSON.stringify(secret)};
+const API_URL = window.location.pathname;
+
+// If no secret was provided in the URL, prompt once before first destructive action
+function ensureSecret() {
+  if (SECRET) return true;
+  const entered = prompt('Enter the admin secret to perform this action:');
+  if (!entered) return false;
+  SECRET = entered;
+  return true;
+}
+
+function showStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status ' + type;
+  if (type === 'success') setTimeout(() => { el.className = 'status'; }, 5000);
+}
+
+function updateSelectedCount() {
+  const checked = document.querySelectorAll('.var-check:checked');
+  const btn = document.getElementById('delete-selected');
+  btn.textContent = 'Delete Selected (' + checked.length + ')';
+  btn.disabled = checked.length === 0;
+}
+
+document.getElementById('select-all').addEventListener('change', (e) => {
+  const visible = document.querySelectorAll('.var-check');
+  visible.forEach(cb => { if (!cb.closest('tr').classList.contains('filtered-out')) cb.checked = e.target.checked; });
+  updateSelectedCount();
+});
+
+document.addEventListener('change', (e) => {
+  if (e.target.classList.contains('var-check')) updateSelectedCount();
+});
+
+document.getElementById('age-filter').addEventListener('change', (e) => {
+  const val = e.target.value;
+  const now = Date.now();
+  const thresholds = { 'all': 0, '1h': 3600000, '6h': 21600000, '24h': 86400000, '3d': 259200000 };
+  const minAge = thresholds[val] || 0;
+
+  document.querySelectorAll('#variant-list tr[data-id]').forEach(tr => {
+    const created = tr.querySelector('td:nth-child(6)')?.textContent || '';
+    const createdMs = new Date(created).getTime();
+    const age = now - createdMs;
+    if (minAge > 0 && age < minAge) {
+      tr.classList.add('filtered-out');
+      tr.style.display = 'none';
+    } else {
+      tr.classList.remove('filtered-out');
+      tr.style.display = '';
+    }
+  });
+});
+
+async function deleteIds(ids) {
+  if (!ensureSecret()) return;
+  showStatus('Deleting ' + ids.length + ' variant(s)...', 'info');
+  try {
+    const res = await fetch(API_URL + '?secret=' + encodeURIComponent(SECRET) + '&action=delete&ids=' + ids.join(','));
+    const data = await res.json();
+    if (data.deleted > 0) {
+      showStatus('Deleted ' + data.deleted + ' variant(s).' + (data.errors?.length ? ' Errors: ' + data.errors.join(', ') : ''), 'success');
+      ids.forEach(id => {
+        const row = document.querySelector('tr[data-id="' + id + '"]');
+        if (row) row.remove();
+      });
+    } else {
+      showStatus('No variants deleted. ' + (data.error || ''), 'error');
+    }
+  } catch (err) {
+    showStatus('Error: ' + err.message, 'error');
+  }
+}
+
+document.querySelectorAll('.delete-one').forEach(btn => {
+  btn.addEventListener('click', () => deleteIds([btn.dataset.id]));
+});
+
+document.getElementById('delete-selected').addEventListener('click', () => {
+  const ids = [...document.querySelectorAll('.var-check:checked')].map(cb => cb.value);
+  if (ids.length === 0) return;
+  if (confirm('Delete ' + ids.length + ' selected variant(s)?')) deleteIds(ids);
+});
+
+document.getElementById('delete-all-cc').addEventListener('click', () => {
+  const ids = [...document.querySelectorAll('.var-check')].map(cb => cb.value);
+  if (ids.length === 0) { showStatus('No CC-* variants to delete.', 'info'); return; }
+  if (confirm('Delete ALL ' + ids.length + ' auto-created variant(s)? Protected variants will NOT be touched.')) deleteIds(ids);
+});
+
+// Featured image upload
+document.getElementById('img-file').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  const preview = document.getElementById('img-preview');
+  const btn = document.getElementById('upload-img-btn');
+  if (!file) { preview.style.display = 'none'; btn.disabled = true; return; }
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    preview.src = ev.target.result;
+    preview.style.display = 'block';
+    btn.disabled = false;
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('upload-img-btn').addEventListener('click', async () => {
+  const file = document.getElementById('img-file').files[0];
+  if (!file) return;
+  if (!ensureSecret()) return;
+  document.getElementById('upload-img-btn').disabled = true;
+  showStatus('Uploading featured image...', 'info');
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      const res = await fetch(API_URL + '?secret=' + encodeURIComponent(SECRET) + '&action=upload-product-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: ev.target.result }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showStatus('Featured image set! View it in Shopify Admin → Products. URL: ' + data.imageUrl, 'success');
+      } else {
+        showStatus('Upload failed: ' + (data.error || 'Unknown error'), 'error');
+      }
+    } catch (err) {
+      showStatus('Error: ' + err.message, 'error');
+    } finally {
+      document.getElementById('upload-img-btn').disabled = false;
+    }
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('run-cron').addEventListener('click', async () => {
+  if (!ensureSecret()) return;
+  showStatus('Running 3-day cleanup...', 'info');
+  try {
+    const res = await fetch(API_URL + '?secret=' + encodeURIComponent(SECRET) + '&action=cron');
+    const data = await res.json();
+    showStatus('Cleanup done: ' + data.deleted + ' deleted, ' + data.kept + ' kept.', 'success');
+    if (data.deleted > 0) setTimeout(() => location.reload(), 1500);
+  } catch (err) {
+    showStatus('Error: ' + err.message, 'error');
+  }
+});
+</script>
+</body>
+</html>`;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Handler                                                            */
 /* ------------------------------------------------------------------ */
@@ -38,124 +441,112 @@ async function resolveProductId(accessToken: string): Promise<string | null> {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    // Auth: allow Vercel cron (Bearer CRON_SECRET) or manual trigger with ?secret= param
+    // Auth: the management UI is viewable without auth (it's behind a Vercel deployment URL).
+    // Destructive actions (delete, cron, upload) require ?secret= or Bearer CRON_SECRET.
     const authHeader = req.headers.authorization || '';
     const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
-    if (CRON_SECRET) {
+    const action = typeof req.query.action === 'string' ? req.query.action : '';
+    const isDestructive = action && action !== 'ui';
+
+    if (isDestructive && CRON_SECRET) {
         const validBearer = authHeader === `Bearer ${CRON_SECRET}`;
         const validQuery = querySecret === CRON_SECRET;
         if (!validBearer && !validQuery) {
-            return res.status(401).json({ error: 'Unauthorized' });
+            return res.status(401).json({ error: 'Unauthorized. Add ?secret=YOUR_CRON_SECRET to the URL.' });
         }
     }
 
     try {
-        // Auth: use static token, fall back to OAuth client_credentials
-        let accessToken = SHOPIFY_ACCESS_TOKEN;
-        if (!accessToken && SHOPIFY_CLIENT_ID && SHOPIFY_CLIENT_SECRET) {
-            try {
-                const tokenRes = await fetch(`https://${SHOPIFY_STORE}/admin/oauth/access_token`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({
-                        grant_type: 'client_credentials',
-                        client_id: SHOPIFY_CLIENT_ID,
-                        client_secret: SHOPIFY_CLIENT_SECRET,
-                    }).toString(),
-                });
-                if (tokenRes.ok) {
-                    const tokenData = await tokenRes.json();
-                    accessToken = tokenData.access_token;
-                }
-            } catch { /* ignore */ }
-        }
-
+        const accessToken = await getAccessToken();
         if (!accessToken) {
-            return res.status(500).json({
-                error: 'Shopify auth not configured. Set SHOPIFY_ACCESS_TOKEN env var in Vercel.',
-                debug: {
-                    hasStaticToken: !!SHOPIFY_ACCESS_TOKEN,
-                    hasClientId: !!SHOPIFY_CLIENT_ID,
-                    hasClientSecret: !!SHOPIFY_CLIENT_SECRET,
-                    store: SHOPIFY_STORE || '(not set)',
-                },
-            });
+            return res.status(500).json({ error: 'Shopify auth not configured.' });
         }
 
         const productId = await resolveProductId(accessToken);
         if (!productId) {
-            return res.status(400).json({ error: 'Could not resolve product ID. Set SHOPIFY_PRODUCT_ID env var.' });
+            return res.status(400).json({ error: 'Could not resolve product ID.' });
         }
 
-        console.log('[CLEANUP] Starting cleanup for product', productId);
+        const variants = await listVariants(productId, accessToken);
 
-        // List all variants
-        const listRes = await fetch(
-            `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants.json?limit=250`,
-            { headers: { 'X-Shopify-Access-Token': accessToken } }
-        );
-
-        if (!listRes.ok) {
-            const errText = await listRes.text();
-            return res.status(502).json({ error: `Failed to list variants: ${listRes.status}`, detail: errText.slice(0, 300) });
+        // Action: show management UI (default for browser GET)
+        if (!action || action === 'ui') {
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            return res.status(200).send(renderManagementUI(variants, productId, querySecret));
         }
 
-        const listData = await listRes.json();
-        const variants = listData?.variants || [];
-        const cutoff = Date.now() - THREE_DAYS_MS;
-
-        console.log('[CLEANUP] Found', variants.length, 'total variants');
-
-        let deleted = 0;
-        let kept = 0;
-        const errors: string[] = [];
-
-        for (const v of variants) {
-            const opt = String(v.option1 || '');
-
-            // Only delete auto-created variants (CC- prefix)
-            if (!opt.startsWith('CC-')) {
-                kept++;
-                continue;
+        // Action: delete specific variant IDs
+        if (action === 'delete') {
+            const idsParam = typeof req.query.ids === 'string' ? req.query.ids : '';
+            const ids = idsParam.split(',').map(s => s.trim()).filter(Boolean);
+            if (ids.length === 0) {
+                return res.status(400).json({ error: 'No variant IDs provided. Use &ids=123,456' });
             }
 
-            // Check age
-            const createdAt = new Date(v.created_at).getTime();
-            if (createdAt >= cutoff) {
-                kept++;
-                continue;
-            }
-
-            // Delete this stale variant
-            try {
-                const delRes = await fetch(
-                    `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants/${v.id}.json`,
-                    { method: 'DELETE', headers: { 'X-Shopify-Access-Token': accessToken } }
-                );
-
-                if (delRes.ok) {
-                    deleted++;
-                    console.log('[CLEANUP] Deleted variant', v.id, opt);
-                } else {
-                    const errText = await delRes.text();
-                    errors.push(`Failed to delete ${v.id}: ${delRes.status} ${errText.slice(0, 100)}`);
-                    console.error('[CLEANUP] Failed to delete variant', v.id, delRes.status);
+            let deleted = 0;
+            const errors: string[] = [];
+            for (const id of ids) {
+                // Safety: only delete CC-* variants
+                const variant = variants.find((v: any) => String(v.id) === id);
+                if (!variant) { errors.push(`${id}: not found`); continue; }
+                if (!String(variant.option1 || '').startsWith('CC-')) {
+                    errors.push(`${id}: protected (not CC-* prefix)`);
+                    continue;
                 }
+                const ok = await deleteVariant(productId, id, accessToken, variant.image_id || undefined);
+                if (ok) deleted++;
+                else errors.push(`${id}: delete failed`);
+            }
+
+            return res.status(200).json({ success: true, deleted, errors: errors.length > 0 ? errors : undefined });
+        }
+
+        // Action: cron cleanup (delete CC-* variants older than 3 days)
+        if (action === 'cron' || action === 'cleanup') {
+            const cutoff = Date.now() - THREE_DAYS_MS;
+            let deleted = 0;
+            let kept = 0;
+            const errors: string[] = [];
+
+            for (const v of variants) {
+                const opt = String(v.option1 || '');
+                if (!opt.startsWith('CC-')) { kept++; continue; }
+                const createdAt = new Date(v.created_at).getTime();
+                if (createdAt >= cutoff) { kept++; continue; }
+
+                const ok = await deleteVariant(productId, String(v.id), accessToken, v.image_id || undefined);
+                if (ok) {
+                    deleted++;
+                    console.log('[CLEANUP] Deleted variant', v.id, opt, v.image_id ? `+ image ${v.image_id}` : '');
+                } else {
+                    errors.push(`Failed to delete ${v.id}`);
+                }
+            }
+
+            console.log('[CLEANUP] Done:', { deleted, kept, errors: errors.length });
+            return res.status(200).json({
+                success: true, productId, totalVariants: variants.length,
+                deleted, kept, errors: errors.length > 0 ? errors : undefined,
+            });
+        }
+
+        // Action: upload a new default/featured product image
+        if (action === 'upload-product-image') {
+            if (req.method !== 'POST') return res.status(405).json({ error: 'POST required' });
+            const { image } = req.body || {};
+            if (!image) return res.status(400).json({ error: 'Missing image (base64)' });
+            try {
+                const result = await uploadProductImage(productId, accessToken, image);
+                console.log('[CLEANUP] Default product image uploaded:', result.imageUrl);
+                return res.status(200).json({ success: true, imageUrl: result.imageUrl, imageId: result.imageId });
             } catch (err: any) {
-                errors.push(`Error deleting ${v.id}: ${err.message}`);
+                return res.status(500).json({ error: err.message });
             }
         }
 
-        console.log('[CLEANUP] Done:', { deleted, kept, errors: errors.length });
+        // Unknown action
+        return res.status(400).json({ error: `Unknown action: ${action}. Use: ui, delete, cron, upload-product-image` });
 
-        return res.status(200).json({
-            success: true,
-            productId,
-            totalVariants: variants.length,
-            deleted,
-            kept,
-            errors: errors.length > 0 ? errors : undefined,
-        });
     } catch (err: any) {
         console.error('[CLEANUP] Error:', err?.stack || err);
         return res.status(500).json({ error: err.message || 'Internal server error' });

@@ -24,11 +24,12 @@ interface SidebarProps {
   onBuyNow: () => void;
   isSubmitting?: boolean;
   submittingAction?: 'cart' | 'buy' | null;
+  submittingStep?: string;
 }
 
 function fmt(n: number) { return '$' + n.toFixed(2); }
 
-export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOpenRal, onAddToCart, onBuyNow, isSubmitting = false, submittingAction = null }: SidebarProps) {
+export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOpenRal, onAddToCart, onBuyNow, isSubmitting = false, submittingAction = null, submittingStep = '' }: SidebarProps) {
   const config = useConfigStore(s => s);
   const holes = config.holes;
   const pc = config.pc;
@@ -96,7 +97,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
               <div className="measure-note">
                 You must add an extra <strong>1/2"</strong> to both the length and width measurements for proper
                 fitment. If you need a custom shape, please <a href="tel:+18887779789">give us a call</a>.{' '}
-                Need help measuring? <a href="https://kaminos.com/measuring-guide" target="_blank" rel="noreferrer">Click here</a>.
+                Need help measuring? <a href="https://kaminos.com/blogs/news/how-to-measure-for-a-chase-cover" target="_blank" rel="noreferrer">Click here</a>.
               </div>
             </div>
           )}
@@ -183,7 +184,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
             </div>
           ))}
         </div>
-        <CartRow onAddToCart={onAddToCart} onBuyNow={onBuyNow} isSubmitting={isSubmitting} submittingAction={submittingAction} />
+        <CartRow onAddToCart={onAddToCart} onBuyNow={onBuyNow} isSubmitting={isSubmitting} submittingAction={submittingAction} submittingStep={submittingStep} />
       </div>
     </div>
   );

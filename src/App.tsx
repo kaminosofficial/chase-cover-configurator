@@ -197,6 +197,157 @@ function tryOpenCartUi() {
   return false;
 }
 
+/**
+ * After /cart/add.js succeeds for a NEW variant, the Shopify storefront may
+ * not have propagated the price yet (returns $0). The cart stores variant_id
+ * + quantity — the price is looked up live on each /cart.js call. So we poll
+ * /cart.js until ALL items have non-zero prices, then fetch fresh sections.
+ *
+ * Returns the fresh sections HTML (or null) so the caller can apply them
+ * before opening the drawer — the user never sees $0.
+ */
+async function waitForCartPriceUpdate(
+  sectionIds: string[],
+  maxWaitMs = 5000
+): Promise<{ sections: Record<string, string> | null; priceOk: boolean }> {
+  const start = Date.now();
+  let attempt = 0;
+
+  while (Date.now() - start < maxWaitMs) {
+    attempt++;
+    await new Promise(r => setTimeout(r, 1000));
+
+    try {
+      const url = sectionIds.length > 0
+        ? `/cart.js?sections=${sectionIds.join(',')}`
+        : '/cart.js';
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const data = await res.json();
+
+      const hasZeroPrice = (data.items || []).some(
+        (item: any) => item.final_line_price === 0 || item.price === 0
+      );
+
+      if (!hasZeroPrice) {
+        console.log(`[CART] Price propagated after ${Date.now() - start}ms (${attempt} polls)`);
+        return { sections: data.sections || null, priceOk: true };
+      }
+      console.log(`[CART] Price still $0 (poll ${attempt}, ${Date.now() - start}ms elapsed)`);
+    } catch (e) {
+      console.warn('[CART] Price poll error:', e);
+    }
+  }
+
+  // Timed out — fetch final sections anyway so drawer has SOMETHING
+  console.warn(`[CART] Price poll timed out after ${Date.now() - start}ms — opening drawer with current data`);
+  try {
+    if (sectionIds.length > 0) {
+      const res = await fetch(`/cart.js?sections=${sectionIds.join(',')}`, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        return { sections: data.sections || null, priceOk: false };
+      }
+    }
+  } catch {}
+  return { sections: null, priceOk: false };
+}
+
+/**
+ * Background polling fallback: if the drawer was opened with $0 (timeout),
+ * keep polling every 2s until the price corrects, then refresh sections.
+ */
+function scheduleBackgroundSectionRefresh(maxRetries = 5) {
+  const sectionIds = discoverCartSectionIds();
+  if (sectionIds.length === 0) return;
+
+  let retries = 0;
+  const poll = async () => {
+    retries++;
+    try {
+      const res = await fetch(`/cart.js?sections=${sectionIds.join(',')}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const hasZeroPrice = (data.items || []).some(
+        (item: any) => item.final_line_price === 0 || item.price === 0
+      );
+
+      if (data.sections) {
+        applySectionUpdates(data.sections);
+        console.log(`[CART] Background refresh ${retries}: updated (zeroPrice=${hasZeroPrice})`);
+      }
+
+      if (hasZeroPrice && retries < maxRetries) {
+        setTimeout(poll, 2000);
+      }
+    } catch {
+      if (retries < maxRetries) setTimeout(poll, 2000);
+    }
+  };
+
+  setTimeout(poll, 2000);
+}
+
+/** Discover cart-related section IDs from the current page DOM. */
+function discoverCartSectionIds(): string[] {
+  const ids = new Set<string>();
+
+  // Look for elements with section IDs (Dawn theme pattern)
+  const candidates = document.querySelectorAll(
+    '[id^="shopify-section-"][id*="cart"], cart-drawer, cart-notification'
+  );
+  for (const el of candidates) {
+    // Extract section ID: "shopify-section-cart-drawer" → "cart-drawer"
+    const fullId = el.id || '';
+    const sectionId = fullId.replace('shopify-section-', '') || el.getAttribute('data-section');
+    if (sectionId) ids.add(sectionId);
+  }
+
+  // Also check data-section attributes
+  const dataSections = document.querySelectorAll('[data-section]');
+  for (const el of dataSections) {
+    const sid = el.getAttribute('data-section');
+    if (sid && (sid.includes('cart') || sid.includes('Cart'))) ids.add(sid);
+  }
+
+  // Common Dawn/Shopify 2.0 theme section IDs as fallbacks
+  if (ids.size === 0) {
+    ids.add('cart-drawer');
+    ids.add('cart-icon-bubble');
+  }
+
+  console.log('[CART] Discovered cart section IDs:', [...ids]);
+  return [...ids];
+}
+
+/** Apply section HTML updates returned from /cart/add.js to the DOM. */
+function applySectionUpdates(sections: Record<string, string>) {
+  for (const [sectionId, html] of Object.entries(sections)) {
+    if (!html) continue;
+
+    // Try to find the section wrapper: "shopify-section-{id}" or data-section="{id}"
+    const target = document.getElementById(`shopify-section-${sectionId}`)
+      || document.querySelector(`[data-section="${sectionId}"]`)
+      || document.getElementById(sectionId);
+
+    if (target) {
+      // Parse the returned HTML and extract inner content
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const newContent = doc.querySelector(`#shopify-section-${sectionId}`)
+        || doc.querySelector(`[data-section="${sectionId}"]`)
+        || doc.body;
+      if (newContent) {
+        target.innerHTML = newContent.innerHTML;
+        console.log('[CART] Updated section DOM:', sectionId);
+      }
+    } else {
+      console.log('[CART] Section target not found for:', sectionId);
+    }
+  }
+}
+
 export default function App({ productId, variantId }: AppProps = {}) {
   const config = useConfigStore(s => s);
   const setConfig = useConfigStore(s => s.set);
@@ -211,6 +362,9 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const [dimOpen, setDimOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<'cart' | 'buy' | null>(null);
+  const [submittingStep, setSubmittingStep] = useState<string>('');
+  // Synchronous guard against double-taps — React state can be stale across rapid clicks
+  const submittingRef = useRef(false);
 
   const arViewerRef = useRef<any>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -511,24 +665,278 @@ export default function App({ productId, variantId }: AppProps = {}) {
           onOpenRal={() => setRalOpen(true)}
           isSubmitting={isSubmitting}
           submittingAction={submittingAction}
+          submittingStep={submittingStep}
           onAddToCart={async () => {
-            if (isSubmitting) return;
+            if (isSubmitting || submittingRef.current) return;
             const apiBase = (window as any).__chaseApiBase || '';
             if (!apiBase) {
               alert('Configuration error: API base not found. Are you running this via the Shopify integration?');
               return;
             }
 
+            submittingRef.current = true;
             let shouldResetSubmitting = true;
             try {
               setIsSubmitting(true);
               setSubmittingAction('cart');
+              setSubmittingStep('cart:building');
+              const t0 = performance.now();
 
               const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
-              console.log('Resolved Shopify IDs for cart:', resolvedShopifyIds);
-              if (!resolvedShopifyIds.variantId) {
-                console.warn('No Shopify variant ID resolved for cart submission.', resolvedShopifyIds.debug);
+
+              // Capture screenshot (don't send with main request — upload in background later)
+              let screenshotBase64: string | undefined;
+              try {
+                let canvasEl: HTMLCanvasElement | null = null;
+                const rootNode = appLayoutRef.current?.getRootNode();
+                if (rootNode && rootNode !== document) {
+                  canvasEl = (rootNode as ShadowRoot).querySelector('canvas');
+                }
+                if (!canvasEl && appLayoutRef.current) canvasEl = appLayoutRef.current.querySelector('canvas');
+                if (!canvasEl) canvasEl = document.querySelector('canvas');
+                if (canvasEl) screenshotBase64 = canvasEl.toDataURL('image/png');
+              } catch { /* ignore */ }
+
+              const payload = {
+                w: config.w, l: config.l, sk: config.sk,
+                drip: config.drip, diag: config.diag,
+                mat: config.mat, gauge: config.gauge,
+                pc: config.pc, pcCol: config.pcCol,
+                holes: config.holes,
+                collarA: config.holes >= 1 ? config.collarA : undefined,
+                collarB: config.holes >= 2 ? config.collarB : undefined,
+                collarC: config.holes >= 3 ? config.collarC : undefined,
+                holeCutoutA: config.holes >= 1 ? formatHoleCutoutSummary('A', config) : undefined,
+                holeCutoutB: config.holes >= 2 ? formatHoleCutoutSummary('B', config) : undefined,
+                holeCutoutC: config.holes >= 3 ? formatHoleCutoutSummary('C', config) : undefined,
+                quantity: config.quantity,
+                notes: config.notes,
+                shopifyProductId: resolvedShopifyIds.productId,
+                shopifyVariantId: resolvedShopifyIds.variantId,
+                // NO image here — uploaded in background after cart is updated
+              };
+
+              // Diagnostic: log key config fields to verify different configs produce different payloads
+              console.log('[CART] ① Payload fingerprint:', JSON.stringify({
+                pc: payload.pc, pcCol: payload.pcCol, mat: payload.mat,
+                holes: payload.holes,
+                cA: payload.collarA ? { shape: payload.collarA.shape, dia: payload.collarA.dia, rw: payload.collarA.rectWidth, rl: payload.collarA.rectLength, o1: payload.collarA.offset1, o2: payload.collarA.offset2, o3: payload.collarA.offset3, o4: payload.collarA.offset4 } : null,
+              }));
+
+              // Step 1: Create variant (fast — no image in payload)
+              setSubmittingStep('cart:building');
+              const tApi = performance.now();
+              const apiController = new AbortController();
+              const apiTimeout = setTimeout(() => apiController.abort(), 30000);
+              let res: Response;
+              try {
+                res = await fetch(`${apiBase}/api/add-to-cart`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload),
+                  signal: apiController.signal,
+                });
+              } catch (fetchErr: any) {
+                if (fetchErr.name === 'AbortError') {
+                  throw new Error('Request timed out. Please check your connection and try again.');
+                }
+                throw new Error('Network error. Please check your connection and try again.');
+              } finally {
+                clearTimeout(apiTimeout);
               }
+
+              const data = await res.json().catch(() => null);
+              const apiMs = Math.round(performance.now() - tApi);
+              if (data?._timing) {
+                const { authPricingMs, optionNameMs, variantMs, totalMs } = data._timing;
+                console.log(`[CART] ② API: ${apiMs}ms total | server breakdown → auth+pricing: ${authPricingMs}ms | optionName: ${optionNameMs}ms | variant: ${variantMs}ms | server total: ${totalMs}ms`);
+              } else {
+                console.log(`[CART] ② API: ${apiMs}ms`);
+              }
+              if (!res.ok) {
+                console.error('Add-to-cart API error:', res.status, data);
+                throw new Error(data?.error || `HTTP error! status: ${res.status}`);
+              }
+
+              console.log(`[CART] ②b Server result: variantId=${data.variantId}, reused=${data.variantReused}, price=${data.price}`);
+
+              // Step 2: Add to Shopify cart IMMEDIATELY (no pre-wait)
+              const cartProperties: Record<string, string> = {};
+              for (const prop of (data.properties || [])) {
+                cartProperties[prop.key] = prop.value;
+              }
+
+              const drawerSectionIds = discoverCartSectionIds();
+              const cartBody: Record<string, any> = {
+                items: [{
+                  id: Number(data.variantId),
+                  quantity: data.quantity,
+                  properties: cartProperties,
+                }],
+              };
+              if (drawerSectionIds.length > 0) {
+                cartBody.sections = drawerSectionIds.join(',');
+              }
+
+              setSubmittingStep('cart:adding');
+              const t1 = performance.now();
+              const cartPayloadStr = JSON.stringify(cartBody);
+
+              // Retry with backoff — only for "sold out" (storefront propagation delay).
+              // Do NOT retry on 429 (rate limit): retrying would make it worse.
+              let cartRes: Response | null = null;
+              let cartErrorText = '';
+              const maxAttempts = 4;
+              for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                if (attempt > 0) {
+                  const delay = attempt * 1500; // 1.5s, 3s, 4.5s
+                  console.log(`[CART] Retry ${attempt}/${maxAttempts - 1} — waiting ${delay}ms...`);
+                  await new Promise(r => setTimeout(r, delay));
+                }
+                cartRes = await fetch('/cart/add.js', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: cartPayloadStr,
+                });
+                if (cartRes.ok) break;
+                cartErrorText = await cartRes.text();
+                const lower = cartErrorText.toLowerCase();
+                // Only retry on sold-out/unavailable (variant propagation) — stop immediately on rate limit
+                const isSoldOut = lower.includes('sold out') || lower.includes('not available');
+                if (!isSoldOut) break;
+                console.warn(`[CART] Sold out on attempt ${attempt + 1} of ${maxAttempts}, retrying...`);
+              }
+
+              if (!cartRes || !cartRes.ok) {
+                let msg = 'Failed to add item to cart';
+                if (cartRes?.status === 429) {
+                  msg = 'Too many requests — please wait a moment and try again.';
+                } else {
+                  try { msg = JSON.parse(cartErrorText)?.description || msg; } catch { /* */ }
+                }
+                throw new Error(msg);
+              }
+              const cartData = await cartRes.json().catch(() => null);
+              console.log(`[CART] ③ /cart/add.js: ${Math.round(performance.now() - t1)}ms`);
+
+              // Step 3: For NEW variants, check if the storefront returned $0.
+              // Shopify's cart stores variant_id+quantity — the price is re-looked-up
+              // on each /cart.js call. So we poll until ALL items have non-zero prices,
+              // THEN apply sections and open the drawer. User never sees $0.
+              const cartItemPrice = cartData?.items?.[0]?.price ?? cartData?.items?.[0]?.final_line_price;
+              let finalSections = cartData?.sections;
+              let priceWasZero = false;
+
+              if (!data.variantReused && (cartItemPrice === 0 || cartItemPrice === '0')) {
+                priceWasZero = true;
+                console.warn('[CART] Storefront returned $0 — polling for price propagation');
+                setSubmittingStep('cart:syncing');
+                const tPoll = performance.now();
+                const pollResult = await waitForCartPriceUpdate(drawerSectionIds, 5000);
+                console.log(`[CART] ③b Price poll: ${Math.round(performance.now() - tPoll)}ms, ok=${pollResult.priceOk}`);
+                if (pollResult.sections) finalSections = pollResult.sections;
+
+                // If still $0 after polling, schedule background refresh as last resort
+                if (!pollResult.priceOk) {
+                  scheduleBackgroundSectionRefresh();
+                }
+              }
+
+              if (finalSections) applySectionUpdates(finalSections);
+              console.log(`[CART] ✓ TOTAL: ${Math.round(performance.now() - t0)}ms${priceWasZero ? ' (included price poll)' : ''}`);
+
+              // Step 4: Update cart UI
+              const addedQty = data.quantity ?? 1;
+              // Cart item_count comes from the cart add response or the poll response
+              const cartItemCount = cartData?.item_count ?? 0;
+              updateCartBadgeCount(cartItemCount > 0 ? cartItemCount : addedQty);
+              dispatchCartSyncEvents(null);
+
+              // Save config so navigating away and coming back restores it
+              saveConfigForRestore();
+
+              const drawerOpened = tryOpenCartUi();
+
+              if (drawerOpened) {
+                console.log('[CART] Cart drawer opened');
+              } else {
+                shouldResetSubmitting = false;
+                window.location.assign('/cart');
+              }
+
+              // Step 5: Upload image in BACKGROUND — after upload completes, silently refresh
+              // the drawer so the image appears without a full page reload.
+              // Skip if variant was reused (it already has an image from a previous session).
+              if (screenshotBase64 && data.variantId && !data.variantReused) {
+                const sectionIds = discoverCartSectionIds();
+                console.log('[CART] Image upload started in background');
+                fetch(`${apiBase}/api/variant-image`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    variantId: data.variantId,
+                    productId: resolvedShopifyIds.productId,
+                    image: screenshotBase64,
+                  }),
+                }).then(async (uploadRes) => {
+                  if (!uploadRes.ok) return;
+                  console.log('[CART] Image uploaded — refreshing drawer...');
+                  if (sectionIds.length > 0) {
+                    await new Promise(r => setTimeout(r, 1500));
+                    const refreshRes = await fetch(`/cart.js?sections=${sectionIds.join(',')}`, { cache: 'no-store' });
+                    if (!refreshRes.ok) return;
+                    const refreshData = await refreshRes.json();
+                    if (refreshData?.sections) {
+                      applySectionUpdates(refreshData.sections);
+                      console.log('[CART] Drawer refreshed with variant image');
+                    }
+                  }
+                }).catch(() => { /* ignore */ });
+              }
+              return;
+
+            } catch (err: any) {
+              console.error('[CART] Add to cart failed:', err?.message, err?.stack);
+              const msg = err?.message || 'Unknown error';
+              alert(msg.length > 200 ? msg.slice(0, 200) + '...' : msg);
+            } finally {
+              submittingRef.current = false;
+              if (shouldResetSubmitting) {
+                setIsSubmitting(false);
+                setSubmittingAction(null);
+                setSubmittingStep('');
+              }
+            }
+          }}
+          onBuyNow={async () => {
+            if (isSubmitting || submittingRef.current) return;
+            const apiBase = (window as any).__chaseApiBase || '';
+            if (!apiBase) {
+              alert('Configuration error: API base not found. Are you running this via the Shopify integration?');
+              return;
+            }
+
+            submittingRef.current = true;
+            let shouldResetSubmitting = true;
+            try {
+              setIsSubmitting(true);
+              setSubmittingAction('buy');
+              setSubmittingStep('buy:building');
+              const tBuyTotal = performance.now();
+
+              const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
+              console.log('Resolved Shopify IDs for Buy Now:', resolvedShopifyIds);
+
+              // Capture screenshot for background upload
+              let screenshotBase64: string | undefined;
+              try {
+                let canvasEl: HTMLCanvasElement | null = null;
+                const rootNode = appLayoutRef.current?.getRootNode();
+                if (rootNode && rootNode !== document) canvasEl = (rootNode as ShadowRoot).querySelector('canvas');
+                if (!canvasEl && appLayoutRef.current) canvasEl = appLayoutRef.current.querySelector('canvas');
+                if (!canvasEl) canvasEl = document.querySelector('canvas');
+                if (canvasEl) screenshotBase64 = canvasEl.toDataURL('image/png');
+              } catch { /* ignore */ }
 
               const payload = {
                 w: config.w, l: config.l, sk: config.sk,
@@ -548,28 +956,46 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 shopifyVariantId: resolvedShopifyIds.variantId,
               };
 
-              // Step 1: Call our API to calculate price + update variant
-              const res = await fetch(`${apiBase}/api/add-to-cart`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-              });
+              // Step 1: Create variant (with timeout for mobile reliability)
+              const buyApiController = new AbortController();
+              const buyApiTimeout = setTimeout(() => buyApiController.abort(), 30000);
+              let res: Response;
+              try {
+                res = await fetch(`${apiBase}/api/add-to-cart`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload),
+                  signal: buyApiController.signal,
+                });
+              } catch (fetchErr: any) {
+                if (fetchErr.name === 'AbortError') {
+                  throw new Error('Request timed out. Please check your connection and try again.');
+                }
+                throw new Error('Network error. Please check your connection and try again.');
+              } finally {
+                clearTimeout(buyApiTimeout);
+              }
 
               const data = await res.json().catch(() => null);
               if (!res.ok) {
-                console.error('Add-to-cart API error:', res.status, data);
+                console.error('Buy Now API error:', res.status, data);
                 throw new Error(data?.error || `HTTP error! status: ${res.status}`);
               }
+              if (data?._timing) {
+                const { authPricingMs, optionNameMs, variantMs, totalMs } = data._timing;
+                console.log(`[BUY] API: ${totalMs}ms | auth+pricing: ${authPricingMs}ms | optionName: ${optionNameMs}ms | variant: ${variantMs}ms`);
+              }
 
-              // Step 2: Add to Shopify's native cart via AJAX Cart API
-              // Retry with backoff because newly created variants may take a moment
-              // to propagate to Shopify's storefront API.
+              // Step 2: Clear cart, add item, then verify price before checkout
+              setSubmittingStep('buy:adding');
+              await fetch('/cart/clear.js', { method: 'POST' });
+
               const cartProperties: Record<string, string> = {};
               for (const prop of (data.properties || [])) {
                 cartProperties[prop.key] = prop.value;
               }
 
-              const cartPayload = JSON.stringify({
+              const buyCartPayload = JSON.stringify({
                 items: [{
                   id: Number(data.variantId),
                   quantity: data.quantity,
@@ -577,156 +1003,88 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 }],
               });
 
+              // Retry with backoff — only for "sold out" (storefront propagation delay).
               let cartRes: Response | null = null;
               let cartErrorText = '';
-              const maxRetries = 3;
-              for (let attempt = 0; attempt < maxRetries; attempt++) {
+              const buyMaxAttempts = 4;
+              for (let attempt = 0; attempt < buyMaxAttempts; attempt++) {
                 if (attempt > 0) {
-                  console.log(`[CART] Retry ${attempt}/${maxRetries - 1} — waiting ${attempt * 1000}ms for variant propagation...`);
-                  await new Promise(r => setTimeout(r, attempt * 1000));
+                  const delay = attempt * 1500;
+                  console.log(`[BUY] Retry ${attempt}/${buyMaxAttempts - 1} — waiting ${delay}ms...`);
+                  await new Promise(r => setTimeout(r, delay));
                 }
-
                 cartRes = await fetch('/cart/add.js', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: cartPayload,
+                  body: buyCartPayload,
                 });
-
                 if (cartRes.ok) break;
-
                 cartErrorText = await cartRes.text();
-                const isSoldOut = cartErrorText.toLowerCase().includes('sold out') || cartErrorText.toLowerCase().includes('not available');
-                if (!isSoldOut) break; // non-inventory error, don't retry
-                console.warn(`[CART] /cart/add.js returned sold out on attempt ${attempt + 1}:`, cartErrorText.slice(0, 200));
+                const lower = cartErrorText.toLowerCase();
+                const isSoldOut = lower.includes('sold out') || lower.includes('not available');
+                if (!isSoldOut) break;
+                console.warn(`[BUY] Sold out on attempt ${attempt + 1} of ${buyMaxAttempts}, retrying...`);
               }
 
               if (!cartRes || !cartRes.ok) {
-                let cartMessage = 'Failed to add item to cart';
-                try {
-                  const cartErrorJson = JSON.parse(cartErrorText);
-                  cartMessage = cartErrorJson?.description || cartErrorJson?.message || cartMessage;
-                } catch {
-                  if (cartErrorText) cartMessage = cartErrorText;
+                console.error('Buy Now cart add error:', cartRes?.status, cartErrorText);
+                const msg = cartRes?.status === 429
+                  ? 'Too many requests — please wait a moment and try again.'
+                  : 'Failed to add item for checkout. Please try again.';
+                throw new Error(msg);
+              }
+
+              // Step 3: For NEW variants, verify price before checkout — $0 checkout is unacceptable
+              const buyCartData = await cartRes.json().catch(() => null);
+              const buyItemPrice = buyCartData?.items?.[0]?.price ?? 0;
+
+              if (!data.variantReused && (buyItemPrice === 0 || buyItemPrice === '0')) {
+                setSubmittingStep('buy:syncing');
+                const tPoll = performance.now();
+                const { priceOk } = await waitForCartPriceUpdate([], 6000);
+                console.log(`[BUY] Price poll: ${Math.round(performance.now() - tPoll)}ms, ok=${priceOk}`);
+                if (!priceOk) {
+                  throw new Error('Price is still updating. Please try again in a few seconds.');
                 }
-                console.error('Shopify cart add error:', cartRes?.status, cartErrorText);
-                throw new Error(cartMessage);
               }
 
-              // Step 3: Verify the cart actually updated before navigating away.
-              const verifiedCartRes = await fetch('/cart.js', {
-                headers: { Accept: 'application/json' },
-                cache: 'no-store',
-              });
-
-              const verifiedCart = await verifiedCartRes.json().catch(() => null) as ShopifyCart | null;
-              console.log('Verified storefront cart after add:', {
-                status: verifiedCartRes.status,
-                itemCount: verifiedCart?.item_count ?? null,
-                variantId: data.variantId,
-              });
-
-              if (!verifiedCartRes.ok || !verifiedCart || typeof verifiedCart.item_count !== 'number') {
-                throw new Error('Shopify cart could not be verified after add.');
+              // Upload image in background (will process even after navigation starts)
+              if (screenshotBase64 && data.variantId && !data.variantReused) {
+                fetch(`${apiBase}/api/variant-image`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    variantId: data.variantId,
+                    productId: resolvedShopifyIds.productId,
+                    image: screenshotBase64,
+                  }),
+                }).catch(() => { /* fire-and-forget */ });
               }
 
-              const addedVariantId = Number(data.variantId);
-              const variantPresent = !!verifiedCart.items?.some((item) => {
-                const itemVariantId = Number(item.variant_id ?? item.id);
-                return Number.isFinite(itemVariantId) && itemVariantId === addedVariantId;
-              });
-
-              if (!variantPresent) {
-                console.warn('Added variant was not found in verified cart payload.', {
-                  addedVariantId,
-                  cart: verifiedCart,
-                });
-              }
-
-              updateCartBadgeCount(verifiedCart.item_count);
-              dispatchCartSyncEvents(verifiedCart);
-              tryOpenCartUi();
-
-              // The host theme drawer is not reliably reactive, so finish with a hard
-              // cart-page navigation to guarantee the customer sees the fresh cart state.
+              // Step 4: Go straight to checkout
+              console.log(`[BUY] ✓ TOTAL: ${Math.round(performance.now() - tBuyTotal)}ms`);
+              setSubmittingStep('buy:redirecting');
               saveConfigForRestore();
               shouldResetSubmitting = false;
-              window.location.assign('/cart');
-              return;
-
-            } catch (err: any) {
-              console.error('Add to cart error:', err);
-              alert(`Failed to add to cart: ${err.message}`);
-            } finally {
-              if (shouldResetSubmitting) {
+              window.location.href = '/checkout';
+              // Safety: if navigation doesn't complete in 15s (slow mobile), unlock the UI
+              setTimeout(() => {
+                submittingRef.current = false;
                 setIsSubmitting(false);
                 setSubmittingAction(null);
-              }
-            }
-          }}
-          onBuyNow={async () => {
-            if (isSubmitting) return;
-            const apiBase = (window as any).__chaseApiBase || '';
-            if (!apiBase) {
-              alert('Configuration error: API base not found. Are you running this via the Shopify integration?');
+                setSubmittingStep('');
+              }, 15000);
               return;
-            }
 
-            let shouldResetSubmitting = true;
-            try {
-              setIsSubmitting(true);
-              setSubmittingAction('buy');
-
-              const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
-              console.log('Resolved Shopify IDs for checkout:', resolvedShopifyIds);
-              if (!resolvedShopifyIds.variantId) {
-                console.warn('No Shopify variant ID resolved for express checkout submission.', resolvedShopifyIds.debug);
-              }
-
-              const payload = {
-                w: config.w, l: config.l, sk: config.sk,
-                drip: config.drip, diag: config.diag,
-                mat: config.mat, gauge: config.gauge,
-                pc: config.pc, pcCol: config.pcCol,
-                holes: config.holes,
-                collarA: config.holes >= 1 ? config.collarA : undefined,
-                collarB: config.holes >= 2 ? config.collarB : undefined,
-                collarC: config.holes >= 3 ? config.collarC : undefined,
-                holeCutoutA: config.holes >= 1 ? formatHoleCutoutSummary('A', config) : undefined,
-                holeCutoutB: config.holes >= 2 ? formatHoleCutoutSummary('B', config) : undefined,
-                holeCutoutC: config.holes >= 3 ? formatHoleCutoutSummary('C', config) : undefined,
-                quantity: config.quantity,
-                notes: config.notes,
-                shopifyProductId: resolvedShopifyIds.productId,
-                shopifyVariantId: resolvedShopifyIds.variantId,
-              };
-
-              const res = await fetch(`${apiBase}/api/create-order`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-              });
-
-              const data = await res.json().catch(() => null);
-              if (!res.ok) {
-                console.error('Create order API error:', res.status, data);
-                throw new Error(data?.error || `HTTP error! status: ${res.status}`);
-              }
-
-              if (data?.checkout_url) {
-                saveConfigForRestore();
-                shouldResetSubmitting = false;
-                window.location.href = data.checkout_url;
-                return;
-              } else {
-                throw new Error(data?.error || 'No checkout URL returned');
-              }
             } catch (err: any) {
               console.error('Buy now error:', err);
               alert(`Failed to create order: ${err.message}`);
             } finally {
+              submittingRef.current = false;
               if (shouldResetSubmitting) {
                 setIsSubmitting(false);
                 setSubmittingAction(null);
+                setSubmittingStep('');
               }
             }
           }}

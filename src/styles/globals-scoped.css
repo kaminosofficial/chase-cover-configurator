@@ -364,15 +364,52 @@
 }
 .chase-cover-configurator-root .add-to-cart:hover { background: var(--primary-hover); }
 .chase-cover-configurator-root .add-to-cart:disabled { background: #b7aa98; cursor: not-allowed; }
-.chase-cover-configurator-root .add-to-cart-content { display: inline-flex; align-items: center; gap: 8px; justify-content: center; }
-.chase-cover-configurator-root .add-to-cart-spinner {
-  width: 14px; height: 14px; border-radius: 50%;
-  border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
-  animation: chase-cover-spin 0.8s linear infinite;
+
+/* ---- Cart button shimmer (while processing) ---- */
+.chase-cover-configurator-root .add-to-cart[aria-busy="true"] {
+  background: linear-gradient(90deg, var(--primary), var(--primary-hover), #c8a06a, var(--primary));
+  background-size: 300% 100%;
+  animation: btn-shimmer 2s ease-in-out infinite;
+  cursor: wait;
 }
-@keyframes chase-cover-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.chase-cover-configurator-root .buy-now-btn[aria-busy="true"] {
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover), #5e5b5e, var(--accent));
+  background-size: 300% 100%;
+  animation: btn-shimmer 2s ease-in-out infinite;
+  cursor: wait;
+}
+@keyframes btn-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -200% 0; }
+}
+/* Step text fades in each time the label changes (key-based re-mount) */
+.chase-cover-configurator-root .cart-btn-step {
+  display: block;
+  animation: cart-step-in 0.3s ease-out both;
+}
+@keyframes cart-step-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+/* Thin sliding progress bar under the buttons */
+.chase-cover-configurator-root .cart-progress-track {
+  width: 100%;
+  height: 2px;
+  background: rgba(0,0,0,0.06);
+  border-radius: 2px;
+  margin-top: 7px;
+  overflow: hidden;
+}
+.chase-cover-configurator-root .cart-progress-fill {
+  height: 100%;
+  width: 35%;
+  border-radius: 2px;
+  background: var(--primary);
+  animation: cart-progress-slide 1.6s ease-in-out infinite;
+}
+@keyframes cart-progress-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(310%); }
 }
 
 .chase-cover-configurator-root .buy-now-btn {

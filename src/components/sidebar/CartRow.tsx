@@ -6,11 +6,27 @@ interface Props {
   onBuyNow: () => void;
   isSubmitting?: boolean;
   submittingAction?: 'cart' | 'buy' | null;
+  submittingStep?: string;
 }
 
 const MAX_QTY = 10;
 
-export function CartRow({ onAddToCart, onBuyNow, isSubmitting = false, submittingAction = null }: Props) {
+function getCartLabel(step: string): string {
+  if (step === 'cart:building') return 'Crafting your cover...';
+  if (step === 'cart:adding')   return 'Adding to cart...';
+  if (step === 'cart:syncing')  return 'Confirming price...';
+  return 'Processing...';
+}
+
+function getBuyLabel(step: string): string {
+  if (step === 'buy:building')    return 'Crafting your cover...';
+  if (step === 'buy:adding')      return 'Preparing checkout...';
+  if (step === 'buy:syncing')     return 'Confirming price...';
+  if (step === 'buy:redirecting') return 'Off we go!';
+  return 'Processing...';
+}
+
+export function CartRow({ onAddToCart, onBuyNow, isSubmitting = false, submittingAction = null, submittingStep = '' }: Props) {
   const quantity = useConfigStore(s => s.quantity);
   const set = useConfigStore(s => s.set);
   const [quantityText, setQuantityText] = useState(String(quantity));
@@ -26,6 +42,12 @@ export function CartRow({ onAddToCart, onBuyNow, isSubmitting = false, submittin
     set({ quantity: next });
     setQuantityText(String(next));
   }
+
+  const cartBusy = isSubmitting && submittingAction === 'cart';
+  const buyBusy  = isSubmitting && submittingAction === 'buy';
+
+  const cartLabel = cartBusy ? getCartLabel(submittingStep) : 'Add to Cart';
+  const buyLabel  = buyBusy  ? getBuyLabel(submittingStep)  : 'Buy Now';
 
   return (
     <>
@@ -52,39 +74,38 @@ export function CartRow({ onAddToCart, onBuyNow, isSubmitting = false, submittin
             style={{ width: '52px' }}
           />
         </div>
+
         <button
           className="add-to-cart"
           onClick={onAddToCart}
           disabled={isSubmitting}
-          aria-busy={isSubmitting && submittingAction === 'cart'}
+          aria-busy={cartBusy}
           style={{ flex: 1 }}
         >
-          {isSubmitting && submittingAction === 'cart' ? (
-            <span className="add-to-cart-content">
-              <span className="add-to-cart-spinner" aria-hidden="true" />
-              Adding...
-            </span>
-          ) : (
-            'Add to Cart'
-          )}
+          <span key={cartLabel} className={cartBusy ? 'cart-btn-step' : undefined}>
+            {cartLabel}
+          </span>
         </button>
+
         <button
           className="buy-now-btn"
           onClick={onBuyNow}
           disabled={isSubmitting}
-          aria-busy={isSubmitting && submittingAction === 'buy'}
+          aria-busy={buyBusy}
           style={{ flex: 1 }}
         >
-          {isSubmitting && submittingAction === 'buy' ? (
-            <span className="add-to-cart-content">
-              <span className="add-to-cart-spinner" aria-hidden="true" />
-              Processing...
-            </span>
-          ) : (
-            'Buy Now'
-          )}
+          <span key={buyLabel} className={buyBusy ? 'cart-btn-step' : undefined}>
+            {buyLabel}
+          </span>
         </button>
       </div>
+
+      {/* Thin progress bar — brand-colored, slides continuously while busy */}
+      {isSubmitting && (
+        <div className="cart-progress-track">
+          <div className="cart-progress-fill" />
+        </div>
+      )}
     </>
   );
 }

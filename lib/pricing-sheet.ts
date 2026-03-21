@@ -136,13 +136,23 @@ function buildPricing(rows: Array<{ c?: Array<{ v?: string | number | null }> }>
     };
 }
 
+/* ---- In-memory cache (survives warm Vercel function restarts, 5-min TTL) ---- */
+const PRICING_CACHE_TTL = 5 * 60 * 1000;
+let pricingCache: { data: PricingConstants; expiresAt: number; sheetId: string } | null = null;
+
 export async function fetchPricingFromPublicSheet(sheetId: string, sheetName = 'pricing'): Promise<PricingConstants> {
     if (!sheetId) {
         throw new Error('Missing GOOGLE_SHEET_ID');
     }
 
+    if (pricingCache && pricingCache.sheetId === sheetId && pricingCache.expiresAt > Date.now()) {
+        console.log('[PRICING] Cache HIT — skipping Google Sheets fetch');
+        return pricingCache.data;
+    }
+
+    const t0 = Date.now();
     const url =
-        `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}&ts=${Date.now()}`;
+        `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) {
         throw new Error(`Google Sheet fetch error: ${res.status}`);
@@ -151,5 +161,9 @@ export async function fetchPricingFromPublicSheet(sheetId: string, sheetName = '
     const text = await res.text();
     const json = parseGvizResponse(text);
     const rows = json.table?.rows ?? [];
-    return buildPricing(rows);
+    const data = buildPricing(rows);
+
+    pricingCache = { data, expiresAt: Date.now() + PRICING_CACHE_TTL, sheetId };
+    console.log('[PRICING] Cache MISS — fetched Google Sheets in', Date.now() - t0, 'ms');
+    return data;
 }

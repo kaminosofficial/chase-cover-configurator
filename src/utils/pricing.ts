@@ -233,7 +233,7 @@ export function computePricingBreakdown(
   const gaugeFactor = pricing.GAUGE_MULT[config.gauge] || 1;
   const materialFactor = pricing.MATERIAL_MULT[config.mat] || 1;
   const prePaintCost = rawCost * gaugeFactor * materialFactor;
-  const paintedMultiplier = config.pc ? normalizePaintedMultiplier(pricing.PAINTED_MULTIPLIER) : 1;
+  const paintedMultiplier = (config.pc && config.mat !== 'copper') ? normalizePaintedMultiplier(pricing.PAINTED_MULTIPLIER) : 1;
   const total = prePaintCost * paintedMultiplier;
 
   return {

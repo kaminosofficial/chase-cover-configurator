@@ -68,6 +68,7 @@ export function ChaseViewer() {
     <>
       <Canvas
         shadows
+        gl={{ preserveDrawingBuffer: true }}
         camera={{ position: [1.5, 1.2, 1.5], fov: 45 }}
         style={{ width: '100%', height: '100%', display: 'block' }}
       >

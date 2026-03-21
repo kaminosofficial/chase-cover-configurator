@@ -242,13 +242,125 @@ function buildCartProperties(config: OrderConfig): { key: string; value: string 
 }
 
 /* ------------------------------------------------------------------ */
-/*  Shopify Admin API — Create variant with unique price               */
+/*  Shopify Admin API — Deterministic variant hash + reuse            */
 /* ------------------------------------------------------------------ */
 
-function generateVariantOptionValue(): string {
-    const ts = Date.now();
-    const rand = Math.random().toString(16).slice(2, 6);
-    return `CC-${ts}-${rand}`;
+/**
+ * FNV-1a hash of the canonical config + price string.
+ * Same configuration → same 8-hex-char hash → same variant reused across all
+ * browsers/users/sessions. Different price (e.g. after sheet update) → different hash.
+ */
+/**
+ * Snap a number to 1/8" resolution, eliminating floating-point drift between
+ * mobile Safari and desktop Chrome so the same visual config → same hash.
+ */
+const r8 = (n: number) => Math.round(n * 8) / 8;
+
+function normalizeCollar(c: CollarConfig | undefined): any {
+    if (!c) return undefined;
+    return {
+        shape: c.shape || 'round',
+        dia: r8(c.dia),
+        rw: c.shape === 'rect' ? r8(c.rectWidth ?? c.dia) : undefined,
+        rl: c.shape === 'rect' ? r8(c.rectLength ?? c.dia) : undefined,
+        h: r8(c.height),
+        cen: c.centered,
+        o1: r8(c.offset1), o2: r8(c.offset2), o3: r8(c.offset3), o4: r8(c.offset4),
+        sc: !!c.stormCollar,
+    };
+}
+
+function configHash(config: OrderConfig, price: string): string {
+    const pc = config.pc && config.mat !== 'copper';
+    const canonicalObj = {
+        w: r8(config.w), l: r8(config.l), sk: r8(config.sk),
+        drip: config.drip, diag: config.diag,
+        mat: config.mat, gauge: config.gauge,
+        pc, pcCol: pc ? config.pcCol : null,
+        holes: config.holes,
+        cA: config.holes >= 1 ? normalizeCollar(config.collarA) : undefined,
+        cB: config.holes >= 2 ? normalizeCollar(config.collarB) : undefined,
+        cC: config.holes >= 3 ? normalizeCollar(config.collarC) : undefined,
+        price,
+    };
+    const canonical = JSON.stringify(canonicalObj);
+    console.log('[CART] Hash input (canonical):', canonical);
+    let h = 2166136261;
+    for (let i = 0; i < canonical.length; i++) {
+        h ^= canonical.charCodeAt(i);
+        h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h.toString(16).padStart(8, '0');
+}
+
+/**
+ * Fetch all variants for the product. Returns the full array.
+ * NOTE: limit=250 is the Shopify API page-size cap. Shopify Basic caps products
+ * at 100 variants, so limit=250 always returns all of them in one call.
+ */
+async function fetchAllVariants(productId: string, accessToken: string): Promise<any[]> {
+    try {
+        const res = await fetch(
+            `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants.json?limit=250`,
+            { headers: { 'X-Shopify-Access-Token': accessToken } }
+        );
+        if (!res.ok) return [];
+        const data = await res.json();
+        return data.variants || [];
+    } catch {
+        return [];
+    }
+}
+
+function findInVariants(variants: any[], hash: string, price: string): string | null {
+    const target = `CC-${hash}`;
+    const found = variants.find((v: any) => v.option1 === target && v.price === price);
+    return found ? String(found.id) : null;
+}
+
+/**
+ * Proactive buffer cleanup: when total variants >= TRIGGER_AT (95), delete the oldest
+ * CC-* variants that are >= 24h old until we're back to TARGET_COUNT (85).
+ * The 24h window protects carts that are in-progress at checkout.
+ * Also deletes each variant's screenshot image to keep media clean.
+ */
+const VARIANT_LIMIT = 100;     // Shopify Basic max
+const TRIGGER_AT   = 95;       // start cleanup when this many variants exist
+const TARGET_COUNT = 85;       // aim to free down to this many
+
+async function proactiveCleanup(productId: string, accessToken: string, variants: any[]): Promise<void> {
+    const total = variants.length;
+    if (total < TRIGGER_AT) return;
+
+    const MIN_AGE_MS = 24 * 60 * 60 * 1000; // only delete variants older than 24h
+    const candidates = variants
+        .filter(v => String(v.option1 || '').startsWith('CC-') && (Date.now() - new Date(v.created_at).getTime()) > MIN_AGE_MS)
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()); // oldest first
+
+    const toDelete = candidates.slice(0, Math.max(0, total - TARGET_COUNT));
+    if (toDelete.length === 0) {
+        console.log(`[CART] Buffer cleanup triggered (${total}/${VARIANT_LIMIT}) but no eligible variants (all < 24h old)`);
+        return;
+    }
+
+    console.log(`[CART] Buffer cleanup: ${total}/${VARIANT_LIMIT} variants — deleting ${toDelete.length} oldest`);
+    let deleted = 0;
+    for (const v of toDelete) {
+        const delRes = await fetch(
+            `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants/${v.id}.json`,
+            { method: 'DELETE', headers: { 'X-Shopify-Access-Token': accessToken } }
+        );
+        if (delRes.ok) {
+            deleted++;
+            if (v.image_id) {
+                await fetch(
+                    `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/images/${v.image_id}.json`,
+                    { method: 'DELETE', headers: { 'X-Shopify-Access-Token': accessToken } }
+                ).catch(() => {});
+            }
+        }
+    }
+    console.log(`[CART] Buffer cleanup done: freed ${deleted} slots (${total - deleted}/${VARIANT_LIMIT} remaining)`);
 }
 
 interface VariantCreateResult {
@@ -258,106 +370,136 @@ interface VariantCreateResult {
     status?: number;
 }
 
-async function createVariant(
-    productId: string,
-    price: string,
-    accessToken: string
-): Promise<VariantCreateResult> {
-    const optionValue = generateVariantOptionValue();
-    console.log('[CART] Creating variant:', { productId, price, optionValue });
+/* ---- GraphQL helper ---- */
 
-    const createRes = await fetch(
-        `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}/variants.json`,
+async function shopifyGraphQL(query: string, accessToken: string, variables?: Record<string, any>): Promise<any> {
+    const res = await fetch(
+        `https://${SHOPIFY_STORE}/admin/api/2025-10/graphql.json`,
         {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-Shopify-Access-Token': accessToken,
             },
-            body: JSON.stringify({
-                variant: {
-                    option1: optionValue,
-                    price,
-                    inventory_policy: 'continue',
-                    inventory_management: null,
-                },
-            }),
+            body: JSON.stringify({ query, variables }),
         }
     );
+    const text = await res.text();
+    try { return JSON.parse(text); } catch { return { errors: [{ message: text.slice(0, 300) }] }; }
+}
 
-    const resText = await createRes.text();
-    if (createRes.ok) {
-        let parsed: any;
-        try { parsed = JSON.parse(resText); } catch { parsed = undefined; }
-        const newVariantId = parsed?.variant?.id;
-        const inventoryItemId = parsed?.variant?.inventory_item_id;
-        if (newVariantId) {
-            const vid = String(newVariantId);
-            const createdPolicy = parsed?.variant?.inventory_policy;
-            const createdMgmt = parsed?.variant?.inventory_management;
-            console.log('[CART] Variant created:', { variantId: vid, price, optionValue, inventoryItemId, createdPolicy, createdMgmt });
+/* ---- Cache for product option name ---- */
+let cachedOptionName: string | null = null;
 
-            const t0 = Date.now();
+async function getProductOptionName(productId: string, accessToken: string): Promise<string> {
+    if (cachedOptionName) return cachedOptionName;
 
-            // Run inventory fixes in PARALLEL for speed
-            const stepA = fetch(
-                `https://${SHOPIFY_STORE}/admin/api/2025-10/variants/${vid}.json`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
-                    body: JSON.stringify({ variant: { id: Number(vid), inventory_policy: 'continue' } }),
-                }
-            ).then(async r => {
-                const d = await r.json().catch(() => null);
-                console.log('[CART] Step A (variant PUT):', { ok: r.ok, ms: Date.now() - t0, policy: d?.variant?.inventory_policy });
-            }).catch(e => console.warn('[CART] Step A failed:', e.message));
-
-            const stepB = inventoryItemId ? fetch(
-                `https://${SHOPIFY_STORE}/admin/api/2025-10/inventory_items/${inventoryItemId}.json`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
-                    body: JSON.stringify({ inventory_item: { tracked: false } }),
-                }
-            ).then(async r => {
-                const d = await r.json().catch(() => null);
-                console.log('[CART] Step B (tracked=false):', { ok: r.ok, ms: Date.now() - t0, tracked: d?.inventory_item?.tracked });
-            }).catch(e => console.warn('[CART] Step B failed:', e.message)) : Promise.resolve();
-
-            // Step C: get location then set inventory (these two are sequential but run in parallel with A+B)
-            const stepC = inventoryItemId ? (async () => {
-                try {
-                    const locRes = await fetch(
-                        `https://${SHOPIFY_STORE}/admin/api/2025-10/locations.json?limit=1`,
-                        { headers: { 'X-Shopify-Access-Token': accessToken } }
-                    );
-                    const locData = await locRes.json().catch(() => null);
-                    const locationId = locData?.locations?.[0]?.id;
-                    if (!locationId) { console.warn('[CART] Step C: no location found'); return; }
-
-                    const setRes = await fetch(
-                        `https://${SHOPIFY_STORE}/admin/api/2025-10/inventory_levels/set.json`,
-                        {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
-                            body: JSON.stringify({ location_id: locationId, inventory_item_id: inventoryItemId, available: 9999 }),
-                        }
-                    );
-                    const setData = await setRes.json().catch(() => null);
-                    console.log('[CART] Step C (inventory=9999):', { ok: setRes.ok, ms: Date.now() - t0, available: setData?.inventory_level?.available });
-                } catch (e: any) { console.warn('[CART] Step C failed:', e.message); }
-            })() : Promise.resolve();
-
-            await Promise.all([stepA, stepB, stepC]);
-            console.log('[CART] All inventory steps done in', Date.now() - t0, 'ms');
-
-            return { ok: true, variantId: vid };
+    const t0 = Date.now();
+    try {
+        const gid = `gid://shopify/Product/${productId}`;
+        const result = await shopifyGraphQL(
+            `{ product(id: "${gid}") { options(first: 1) { name } } }`,
+            accessToken
+        );
+        const name = result?.data?.product?.options?.[0]?.name;
+        console.log('[CART] getProductOptionName:', name, 'in', Date.now() - t0, 'ms');
+        if (name) {
+            cachedOptionName = name;
+            return name;
         }
-        return { ok: false, error: 'Variant created but no ID in response', status: 200 };
+    } catch (e: any) {
+        console.warn('[CART] Failed to get option name in', Date.now() - t0, 'ms:', e.message);
+    }
+    return 'Title'; // Shopify's default option name
+}
+
+/* ---- Create variant via GraphQL (tracked=false in single call) ---- */
+
+async function createVariant(
+    productId: string,
+    price: string,
+    accessToken: string,
+    optionName: string,
+    hash: string
+): Promise<VariantCreateResult> {
+    const optionValue = `CC-${hash}`;
+    const gid = `gid://shopify/Product/${productId}`;
+
+    console.log('[CART] Creating variant via GraphQL:', { productId, price, optionValue, optionName });
+
+    const t0 = Date.now();
+    const mutation = `
+        mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkCreate(productId: $productId, variants: $variants) {
+                productVariants {
+                    id
+                    inventoryItem { tracked }
+                    inventoryPolicy
+                }
+                userErrors { field message }
+            }
+        }
+    `;
+
+    const variables = {
+        productId: gid,
+        variants: [{
+            optionValues: [{ optionName, name: optionValue }],
+            price,
+            inventoryPolicy: 'CONTINUE',
+            inventoryItem: { tracked: false },
+        }],
+    };
+
+    const result = await shopifyGraphQL(mutation, accessToken, variables);
+    console.log('[CART] GraphQL mutation took', Date.now() - t0, 'ms');
+
+    // Check for GraphQL-level errors
+    if (result?.errors?.length) {
+        const errMsg = result.errors.map((e: any) => e.message).join('; ');
+        console.error('[CART] GraphQL errors:', errMsg);
+        return { ok: false, error: `GraphQL error: ${errMsg}`, status: 400 };
     }
 
-    console.error('[CART] Variant creation failed:', { status: createRes.status, body: resText.slice(0, 500) });
-    return { ok: false, error: `Shopify returned ${createRes.status}: ${resText.slice(0, 300)}`, status: createRes.status };
+    // Check for user errors (validation failures)
+    const userErrors = result?.data?.productVariantsBulkCreate?.userErrors || [];
+    if (userErrors.length > 0) {
+        const errMsg = userErrors.map((e: any) => `${e.field}: ${e.message}`).join('; ');
+        console.error('[CART] Variant creation user errors:', errMsg);
+        const isLimitError = errMsg.toLowerCase().includes('limit') || errMsg.toLowerCase().includes('maximum');
+        // Race condition: another request created the same hash variant just now — treat as success
+        const isDuplicate = errMsg.toLowerCase().includes('taken') || errMsg.toLowerCase().includes('duplicate') || errMsg.toLowerCase().includes('already');
+        if (isDuplicate) {
+            console.log('[CART] Duplicate option value (race condition) — re-fetching existing variant');
+            const existing = findInVariants(await fetchAllVariants(productId, accessToken), hash, price);
+            if (existing) return { ok: true, variantId: existing };
+        }
+        return { ok: false, error: errMsg, status: isLimitError ? 422 : 400 };
+    }
+
+    // Extract the created variant
+    const variants = result?.data?.productVariantsBulkCreate?.productVariants || [];
+    if (variants.length === 0) {
+        return { ok: false, error: 'No variant returned from GraphQL', status: 200 };
+    }
+
+    const createdVariant = variants[0];
+    // GraphQL returns GID like "gid://shopify/ProductVariant/12345" — extract numeric ID
+    const gidStr = createdVariant.id || '';
+    const numericId = gidStr.split('/').pop() || gidStr;
+    const tracked = createdVariant?.inventoryItem?.tracked;
+    const policy = createdVariant?.inventoryPolicy;
+
+    console.log('[CART] Variant created via GraphQL:', {
+        variantId: numericId, price, optionValue, tracked, policy,
+        totalMs: Date.now() - t0,
+    });
+
+    if (!numericId || numericId === gidStr) {
+        return { ok: false, error: 'Could not extract variant ID from GraphQL response', status: 200 };
+    }
+
+    return { ok: true, variantId: numericId };
 }
 
 /** Emergency cleanup: delete CC-* variants older than the given threshold */
@@ -407,7 +549,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
         const handlerStart = Date.now();
         const config: OrderConfig = req.body;
-        console.log('[CART] Add-to-cart request received, productId:', config.shopifyProductId);
+        const hasImage = !!config.image;
+        console.log('[CART] === Add-to-cart START ===', { productId: config.shopifyProductId, hasImage });
 
         applyProductIdFallback(config);
 
@@ -417,15 +560,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 1. Auth + pricing in parallel
+        const t1 = Date.now();
         const [accessToken, pricing] = await Promise.all([
             getShopifyAccessToken(),
             fetchPricingFromSheet(),
         ]);
-
-        console.log('[CART] Auth+pricing done in', Date.now() - handlerStart, 'ms');
+        const authPricingMs = Date.now() - t1;
+        console.log('[CART] [1] Auth+pricing:', authPricingMs, 'ms');
 
         // 2. Resolve product ID if missing
         if (!config.shopifyProductId) {
+            const t2 = Date.now();
             console.log('[CART] No product ID — listing products to find chase cover...');
             try {
                 const listRes = await fetch(
@@ -440,7 +585,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     ) || products[0];
                     if (chaseProduct?.id) {
                         config.shopifyProductId = String(chaseProduct.id);
-                        console.log('[CART] Resolved product from list:', chaseProduct.title, '→', config.shopifyProductId);
+                        console.log('[CART] [2] Resolved product:', chaseProduct.title, '→', config.shopifyProductId, 'in', Date.now() - t2, 'ms');
                     }
                 }
             } catch (err: any) {
@@ -455,38 +600,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
-        // 3. Calculate price server-side
-        const priceStart = Date.now();
+        // 3. Get option name + calculate price IN PARALLEL
+        const t3 = Date.now();
+        const [optionName] = await Promise.all([
+            getProductOptionName(config.shopifyProductId, accessToken),
+        ]);
+        const optionNameMs = Date.now() - t3;
+
         let stormCollarCost = 0;
         const collars = [config.collarA, config.collarB, config.collarC];
         for (let i = 0; i < config.holes; i++) {
             const c = collars[i];
             if (c?.stormCollar) stormCollarCost += getStormCollarPrice(c.dia, pricing.STORM_COLLAR_PRICES ?? {});
         }
-
         const pricingBreakdown = computePricingBreakdown(config, pricing, stormCollarCost);
         const unitPrice = pricingBreakdown.total;
         const priceStr = unitPrice.toFixed(2);
-        console.log('[CART] Pricing breakdown:', { ...pricingBreakdown, paintedEnabled: config.pc });
-        console.log('[CART] Price computed in', Date.now() - priceStart, 'ms:', priceStr);
+        console.log('[CART] [3] OptionName+pricing:', optionNameMs, 'ms, price:', priceStr);
 
-        // 4. Create a new variant with the exact price
-        const createStart = Date.now();
-        const firstAttempt = await createVariant(config.shopifyProductId, priceStr, accessToken);
-        let variantId: string | undefined = firstAttempt.variantId;
-        let lastError: string = firstAttempt.error || '';
+        // 4. Fetch variant list once → buffer cleanup if near limit → reuse or create
+        const t4 = Date.now();
+        const hash = configHash(config, priceStr);
+        console.log('[CART] Config hash:', hash);
 
-        // If variant limit reached (422), try emergency cleanup and retry once
-        if (!firstAttempt.ok && firstAttempt.status === 422) {
-            console.warn('[CART] Variant creation returned 422 — attempting emergency cleanup');
-            const cleaned = await emergencyCleanup(config.shopifyProductId, accessToken);
-            if (cleaned > 0) {
-                console.log('[CART] Emergency cleanup freed', cleaned, 'slots — retrying variant creation');
-                const retry = await createVariant(config.shopifyProductId, priceStr, accessToken);
-                if (retry.ok) {
-                    variantId = retry.variantId;
-                } else {
-                    lastError = retry.error;
+        const allVariants = await fetchAllVariants(config.shopifyProductId, accessToken);
+        console.log(`[CART] Total variants: ${allVariants.length}/${VARIANT_LIMIT}`);
+
+        // Proactive cleanup when within 5 slots of the Shopify Basic limit
+        await proactiveCleanup(config.shopifyProductId, accessToken, allVariants);
+
+        const existingId = findInVariants(allVariants, hash, priceStr);
+        let variantId: string | undefined;
+        let lastError = '';
+        let variantMs: number;
+
+        if (existingId) {
+            variantId = existingId;
+            variantMs = Date.now() - t4;
+            console.log('[CART] [4] Reusing existing variant:', existingId, 'in', variantMs, 'ms');
+        } else {
+            const firstAttempt = await createVariant(config.shopifyProductId, priceStr, accessToken, optionName, hash);
+            variantId = firstAttempt.variantId;
+            lastError = firstAttempt.error || '';
+            variantMs = Date.now() - t4;
+            console.log('[CART] [4] createVariant:', variantMs, 'ms, ok:', firstAttempt.ok);
+
+            // If variant limit reached (Shopify Basic = 100 max), emergency cleanup + retry once
+            if (!firstAttempt.ok && firstAttempt.status === 422) {
+                console.warn('[CART] Variant limit hit — attempting emergency cleanup');
+                const cleaned = await emergencyCleanup(config.shopifyProductId, accessToken);
+                if (cleaned > 0) {
+                    console.log('[CART] Emergency cleanup freed', cleaned, 'slots — retrying');
+                    const retry = await createVariant(config.shopifyProductId, priceStr, accessToken, optionName, hash);
+                    if (retry.ok) variantId = retry.variantId;
+                    else lastError = retry.error || '';
                 }
             }
         }
@@ -498,18 +665,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
-        // 5. Build the line item properties for the frontend to use with /cart/add.js
+        // 5. Build line item properties
         const properties = buildCartProperties(config);
         const quantity = Math.max(1, Math.min(99, Math.round(config.quantity || 1)));
 
-        console.log('[CART] Total handler time:', Date.now() - handlerStart, 'ms (create+inventory:', Date.now() - createStart, 'ms)');
+        const totalMs = Date.now() - handlerStart;
+        console.log('[CART] === DONE ===', totalMs, 'ms total | auth+pricing:', authPricingMs, '| optionName:', optionNameMs, '| variant:', variantMs);
 
         return res.status(200).json({
             success: true,
             variantId,
+            variantReused: !!existingId,
             quantity,
             price: priceStr,
             properties,
+            _timing: { authPricingMs, optionNameMs, variantMs, totalMs },
         });
     } catch (err: any) {
         console.error('[CART] Add-to-cart error:', err?.stack || err);
