@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is a 3D chase cover configurator built for **Kaminos**. Users configure custom chase covers by setting dimensions, hole placements, material, gauge, and options. The 3D model updates in real-time and supports AR preview. The app is deployed on **Vercel** and integrates with **Shopify** (Draft Orders) and **Google Sheets** (dynamic pricing).
+This is a 3D chase cover configurator built for **Kaminos**. Users configure custom chase covers by setting dimensions, hole placements, material, gauge, and options. The 3D model updates in real-time and supports AR preview. The app is deployed on **Vercel** and integrates with **Shopify** (variant-based cart flow) and **Google Sheets** (dynamic pricing).
 
 **Tech stack**: React + TypeScript + Vite + Zustand (state) + React Three Fiber (3D) + Three.js (geometry)
 
@@ -18,10 +18,15 @@ This is a 3D chase cover configurator built for **Kaminos**. Users configure cus
 chase-cover-configurator/
 ├── api/                                 # Vercel serverless functions
 │   ├── pricing.ts                       # GET /api/pricing — returns Google Sheet pricing (cached 5 min)
-│   └── create-order.ts                  # POST /api/create-order — creates Shopify Draft Order
+│   ├── add-to-cart.ts                   # POST /api/add-to-cart — creates/reuses Shopify variant, returns variant ID
+│   ├── variant-image.ts                # POST /api/variant-image — uploads 3D screenshot to Shopify CDN
+│   ├── cleanup-variants.ts             # GET /api/cleanup-variants — management UI + cron for variant cleanup
+│   ├── create-order.ts                  # POST /api/create-order — legacy Draft Order flow (not primary)
+│   └── cart-debug.ts                    # POST /api/cart-debug — receives client-side debug telemetry
 ├── lib/
-│   └── pricing-sheet.ts                 # Shared pricing fetch logic (used by api/pricing.ts + api/create-order.ts)
-├── vercel.json                          # Vercel build config, CORS headers, rewrites
+│   ├── pricing-sheet.ts                 # Shared pricing fetch logic (Google Sheets → PricingConstants)
+│   └── shopify-auth.ts                  # Shared Shopify auth (token management, origin validation)
+├── vercel.json                          # Vercel build config, CORS headers, rewrites, function timeouts
 ├── .env                                 # Environment variables (see "Environment Variables" section)
 ├── package.json                         # Scripts: dev, build, build:shopify, build:vercel
 ├── vite.config.ts                       # Multi-target build config (SPA / Shopify IIFE / Vercel)
@@ -32,7 +37,7 @@ chase-cover-configurator/
 ├── dist/                                # Vercel output (SPA + IIFE copy)
 ├── dist-shopify/                        # Shopify IIFE build output
 ├── src/
-│   ├── App.tsx                          # Main layout, dim-overlay, AR launch, Add to Cart handler
+│   ├── App.tsx                          # Main layout, dim-overlay, AR launch, Add to Cart + Buy Now handlers
 │   ├── main.tsx                         # React entry point (standalone SPA mode)
 │   ├── shopify-entry.tsx                # Shopify IIFE entry (Shadow DOM, portal, API base detection)
 │   ├── web-component.tsx                # Legacy web component entry (not used in production)
@@ -43,6 +48,7 @@ chase-cover-configurator/
 │   │   └── ralColors.ts                 # RAL color palette data
 │   ├── utils/
 │   │   ├── geometry.ts                  # 3D model generation (buildScene, holeWorld, mkMat)
+│   │   ├── pricing.ts                   # computePricingBreakdown() — shared between client and server
 │   │   ├── ar.ts                        # AR export (GLB) and config serialization
 │   │   ├── cameraRef.ts                 # Camera action bindings (reset, top, front)
 │   │   ├── format.ts                    # formatFrac() — fraction display (e.g. 48 1/2)
@@ -62,7 +68,7 @@ chase-cover-configurator/
 │   │   │   ├── ToggleRow.tsx            # Toggle switches (drip, diag, pc)
 │   │   │   ├── PowderCoatSection.tsx    # Color picker + RAL trigger
 │   │   │   ├── PriceDisplay.tsx         # Estimated price display
-│   │   │   ├── CartRow.tsx              # Quantity + Add to Cart + Download PDF
+│   │   │   ├── CartRow.tsx              # Quantity + Add to Cart + Buy Now + Download PDF
 │   │   │   ├── NotesField.tsx           # Special notes textarea (200-word limit)
 │   │   │   └── InfoTooltip.tsx          # ⓘ hover tooltip component
 │   │   ├── pdf/
@@ -85,17 +91,18 @@ All environment variables are set in Vercel (Settings > Environment Variables) a
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `GOOGLE_SHEET_ID` | Google Sheet ID containing pricing constants | `1L9qAQ...` |
-| `GOOGLE_SHEETS_API_KEY` | Google Cloud API key (restricted to Sheets API) | `AIzaSy...` |
 | `SHOPIFY_STORE` | Shopify store domain | `your-store.myshopify.com` |
 | `SHOPIFY_ACCESS_TOKEN` | Static Shopify Admin API token (`shpat_...`) — **preferred method** | `shpat_abc123...` |
 | `SHOPIFY_CLIENT_ID` | Shopify App Client ID (fallback OAuth only — see caveats) | `18e8d5...` |
 | `SHOPIFY_CLIENT_SECRET` | Shopify App Client Secret (fallback OAuth only — see caveats) | `shpss_e7...` |
+| `SHOPIFY_PRODUCT_ID` | Fallback product ID if not passed from Shopify template | `7983854...` |
+| `CRON_SECRET` | Secret for authenticating cleanup-variants cron/manual triggers | `my-secret` |
 
-**Auth priority** (in `api/create-order.ts`):
+**Auth priority** (in `lib/shopify-auth.ts`, shared by all API endpoints):
 1. If `SHOPIFY_ACCESS_TOKEN` is set → use it directly (**always use this for client stores**)
 2. Otherwise → try `client_credentials` OAuth grant using `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET`
 
-> ⚠️ **IMPORTANT — Shopify OAuth Caveat**: The `client_credentials` grant (`SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET`) **only works when the app and the store are in the same Shopify organization**. If the app was created via the Partners Dashboard in the partner's org and installed on a client's store (different org), Shopify will return `shop_not_permitted`. **Always use `SHOPIFY_ACCESS_TOKEN` (Option A) for client store deployments**. Create the app directly in the client's store Admin > Settings > Apps > Develop apps.
+> ⚠️ **IMPORTANT — Shopify OAuth Caveat**: The `client_credentials` grant **only works when the app and the store are in the same Shopify organization**. If the app was created via the Partners Dashboard in the partner's org and installed on a client's store (different org), Shopify will return `shop_not_permitted`. **Always use `SHOPIFY_ACCESS_TOKEN`** for client store deployments. Create the app directly in the client's store Admin > Settings > Apps > Develop apps.
 
 ---
 
@@ -128,6 +135,8 @@ Before the Shopify IIFE build, `scripts/sync-shopify-css.mjs` copies `globals.cs
 - `outputDirectory`: `dist`
 - CORS headers on `/api/*` and both IIFE filenames (Access-Control-Allow-Origin: *)
 - Cache-Control on IIFE: `public, max-age=60, s-maxage=300`
+- Function timeouts: `add-to-cart.ts` = 30s, `variant-image.ts` = 25s
+- Cron: `cleanup-variants` runs every 3 days at midnight UTC
 
 ### Manual Deploy
 
@@ -142,19 +151,21 @@ npx vercel --prod
 
 See `SHOPIFY-INTEGRATION-GUIDE.md` for full step-by-step setup.
 
-### How It Works
+### How It Works (Variant-Based Cart Flow)
 
 1. **Shopify product page** loads `<script src="https://chase-cover-configurator.vercel.app/chase-cover-configurator.iife.js">`
 2. The IIFE (`shopify-entry.tsx`) attaches a **Shadow DOM** to `<chase-cover-configurator>` for CSS isolation
 3. On load, it calls `GET /api/pricing` to fetch pricing constants from Google Sheets
 4. User configures the chase cover; price updates in real-time
-5. "Add to Cart" calls `POST /api/create-order` which:
+5. **"Add to Cart"** calls `POST /api/add-to-cart` which:
    - Re-fetches pricing from Google Sheets (tamper-proof)
    - Recalculates price server-side
-   - Creates a Shopify **Draft Order** via Admin API (API version `2025-10`)
-   - Returns the `invoice_url` (Shopify checkout link)
-6. Customer is redirected to Shopify's native checkout
-7. If user presses **back** from checkout, their configuration is automatically restored
+   - Creates a **deterministic variant** on the Shopify product (or reuses an existing one with matching config hash)
+   - Returns `{ variantId, price, properties, variantReused, propagated }`
+6. Client-side adds the variant to Shopify's cart via `/cart/add.js` with a unified retry loop (`addToCartWithRetry`)
+7. Cart drawer opens with correct price (sections are validated before display)
+8. **"Buy Now"** follows the same flow but clears the cart first and redirects to `/checkout`
+9. If user presses **back** from checkout, their configuration is automatically restored
 
 ### Shadow DOM & Portals
 
@@ -174,7 +185,7 @@ The Shopify Liquid template can pass product/variant IDs:
 </chase-cover-configurator>
 ```
 
-These are read by `shopify-entry.tsx` and passed to `App` as props. When present, the Draft Order line item includes `variant_id` or `product_id`, linking the order to the Shopify product catalog.
+These are read by `shopify-entry.tsx` and passed to `App` as props. The `product-id` is also resolved at runtime from multiple Shopify DOM sources (see `resolveRuntimeShopifyIds` in `App.tsx`).
 
 ### API Base URL Detection
 
@@ -186,50 +197,99 @@ The IIFE detects its own origin by scanning `<script>` tags for one containing `
 
 ### `GET /api/pricing`
 
-- Fetches pricing constants from Google Sheets (`Sheet1!A1:B20`)
+- Fetches pricing constants from Google Sheets (public gviz endpoint)
 - In-memory cache with 5-minute TTL
-- Returns JSON: `{ AREA_RATE, LINEAR_RATE, BASE_FIXED, HOLE_PRICE, POWDER_COAT, SKIRT_SURCHARGE, SKIRT_THRESHOLD, GAUGE_MULT, MATERIAL_MULT, STORM_COLLAR_PRICES }`
-- Cache-Control: `public, max-age=60, s-maxage=300`
+- Returns JSON with pricing constants (EXT_ANCHOR, EXT_S_W, EXT_S_L, etc.)
+- **Fallback**: If Google Sheets is unreachable, returns hardcoded default constants (see `DEFAULT_PRICING` in `lib/pricing-sheet.ts`) with a server-side warning log
 
-### `POST /api/create-order`
+### `POST /api/add-to-cart` (Primary cart flow)
 
-- Receives full configuration as JSON body (including optional `image` base64 data URL)
-- Authenticates with Shopify (static token preferred — see auth caveat above)
+- **Max duration**: 30s (configured in `vercel.json`)
+- Receives full configuration as JSON body
+- Authenticates with Shopify via `lib/shopify-auth.ts`
 - Fetches pricing from Google Sheets server-side (tamper-proof)
-- Computes price server-side
-- Optionally uploads a 3D viewer screenshot to Shopify Files (requires `write_files` scope on the app)
-- Creates a Shopify Draft Order with:
-  - **Combined** line item properties: `Dimensions`, `Material & Gauge`, `Options`, `Powder Coat`, `Holes`, per-hole detail lines
-  - Hidden `_config_json` property with full JSON config for reproduction
-  - Hidden `_preview_image` property with Shopify-hosted image URL (if image upload succeeded)
-  - Order note with human-readable description + preview URL
-- Returns `{ checkout_url }` (the Draft Order invoice URL)
+- Computes price via `computePricingBreakdown()` from `src/utils/pricing.ts`
+- **Variant creation/reuse**:
+  1. Generates a deterministic FNV-1a hash from config + price (`configHash()`)
+  2. Fetches all existing variants; finds match by hash + price
+  3. If found → reuses existing variant (instant, no propagation needed)
+  4. If not found → creates new variant via `productVariantsBulkCreate` GraphQL
+  5. Quick propagation hint (3s max) — client owns the real retry loop
+- **Variant cleanup**: Proactive cleanup when nearing 100-variant Shopify Basic limit (deletes CC-* variants older than 24h)
+- Returns `{ variantId, variantReused, propagated, price, properties, _timing }`
+- Line item `properties` include: Dimensions, Material & Gauge, Options, Powder Coat, Holes, per-hole details, Special Notes, hidden `_config_json`
 
-#### Line Item Properties Format (Shopify cart/checkout)
+### `POST /api/variant-image`
 
-```
-Dimensions:        60" L × 48" W × 3" Skirt
-Material & Gauge:  Galvanized — 24ga
-Options:           Drip Edge: Yes · Diagonal Crease: Yes
-Powder Coat:       Ruby Red (#940604)          ← only if pc enabled and mat != copper
-Holes:             2
-H1 (Left):         Round ⌀10" — Collar 3" tall
-H1 Position:       Centered on cover
-H2 (Right):        Rectangle 8" × 8" — Collar 2" tall
-H2 Offsets:        Top: 5" · Right: 8" · Bottom: 5" · Left: 8"
-Special Notes:     …
-_config_json:      { full JSON… }              ← hidden (prefixed with _)
-_preview_image:    https://cdn.shopify.com/…  ← hidden (prefixed with _)
-```
+- **Max duration**: 25s (configured in `vercel.json`)
+- Receives `{ variantId, productId, image }` where image is base64 data URL
+- **Image size validation**: Rejects images > ~500KB decoded (returns 413)
+- Upload flow:
+  1. `stagedUploadsCreate` GraphQL → temporary upload URL
+  2. HTTP `PUT` binary to staged URL
+  3. REST `POST` to attach image to product + variant
+- Returns `{ imageUrl }` (Shopify CDN URL)
+- **Requirement**: Shopify app must have `write_files` scope
 
-#### Cart Image Upload
+### `GET /api/cleanup-variants`
 
-The `POST /api/create-order` handler receives a `base64` PNG of the 3D viewer and uploads it to Shopify using:
-1. `stagedUploadsCreate` GraphQL mutation → gets a temporary upload URL
-2. HTTP `PUT` to the staged URL with the binary image
-3. `fileCreate` GraphQL mutation → creates a permanent Shopify CDN file
+- Management dashboard for variant cleanup
+- Cron: runs every 3 days (deletes CC-* variants older than 3 days)
+- Manual: accessible via browser with `?secret=CRON_SECRET` for management UI
+- Auth: `CRON_SECRET` env var, passed as query param or Bearer header
 
-**Requirement**: The Shopify app must have the `write_files` scope enabled. Without it, the upload fails silently (order is still created — image is just omitted).
+### `POST /api/create-order` (Legacy Draft Order flow)
+
+- Creates a Shopify Draft Order with full configuration
+- Not the primary flow — kept for backwards compatibility
+- Uses shared auth from `lib/shopify-auth.ts`
+
+### `POST /api/cart-debug`
+
+- Receives client-side debug telemetry for troubleshooting cart issues
+- Logs to Vercel function logs
+
+---
+
+## Cart Flow: Add to Cart (Detailed)
+
+**Files**: `src/App.tsx` (`onAddToCart` handler, `addToCartWithRetry()`, `waitForUsableRenderedSections()`)
+
+### Flow
+
+1. **Capture screenshot** of 3D canvas as JPEG with white background composite
+2. **Call `POST /api/add-to-cart`** with config (no image — image uploaded separately)
+3. **Fire-and-forget image upload** via `POST /api/variant-image` in background
+4. **Unified cart retry** (`addToCartWithRetry()`):
+   - POST `/cart/add.js` with variant ID + sections
+   - If 422 "sold out" → variant not propagated yet, retry with backoff
+   - If 429 rate limit → retry with longer backoff (2s, 4s, 5s)
+   - If 200 OK → check price on specific variant: price > 0 = success, price = 0 = switch to price-wait phase
+   - Price-wait phase: poll `/cart.js` every 1.5s for non-zero price on our variant
+   - One timeout budget (25s default, 30s on iPhone Safari)
+   - Propagation timeout → enters `continueCartPreparationUntilVerified()` (polls indefinitely until price confirmed)
+5. **Section readiness check** (`waitForUsableRenderedSections()`):
+   - Fetches rendered cart drawer sections from Shopify
+   - Rejects sections containing `$0` or `$0.00`
+   - Tries seed sections first (bundled from cart/add response), then fresh fetches
+   - 6s initial timeout, 12s extended retry if initial fails
+6. **Apply sections & open drawer** — only when sections don't contain $0
+7. **Post-open image refresh**: If image upload finishes after drawer opens, fetches fresh sections to show the image
+
+### Key Design Decisions
+
+- **$0 prevention**: Sections are validated before display. If $0 is detected, sections are rejected and re-fetched. Never shows $0 to user.
+- **Price check on specific variant**: Uses `findTargetCartItem(cartData, variantId)` to check OUR variant's price, not the overall cart total.
+- **No exact price text match**: Section validation only checks for `$0` presence, NOT for exact expected price text. This avoids false rejections when quantity > 1 (line total differs from unit price).
+- **429 is retryable**: Shopify's storefront rate limit is retried with backoff, never surfaced as error to user.
+
+### Buy Now Flow
+
+Same as Add to Cart but:
+1. Calls `/cart/clear.js` first (clears existing cart — standard Shopify "Buy Now" behavior)
+2. 300ms pause after clear to avoid 429
+3. No sections needed (redirects to `/checkout` instead of opening drawer)
+4. Image upload is `await`ed before redirect (prevents mobile browser from cancelling in-flight request)
 
 ---
 
@@ -237,31 +297,28 @@ The `POST /api/create-order` handler receives a `base64` PNG of the 3D viewer an
 
 Pricing constants are stored in a Google Sheet and fetched at two points:
 1. **Client-side** (`loadPricingFromAPI`): On app startup, fetches via `GET /api/pricing` for real-time price display
-2. **Server-side** (`create-order.ts`): Re-fetches directly from Google Sheets API before creating the order (tamper-proof)
+2. **Server-side** (`add-to-cart.ts` / `create-order.ts`): Re-fetches directly from Google Sheets API before creating the variant/order (tamper-proof)
 
 When remote pricing loads, the Zustand store's `onPricingLoaded` callback triggers a price recompute.
 
+**Fallback**: If Google Sheets is unreachable (network error, API down), `lib/pricing-sheet.ts` returns hardcoded `DEFAULT_PRICING` constants and logs a warning. The configurator continues to work with default prices.
+
 ### Google Sheet Structure
 
-| Row | A (Key) | B (Value) |
-|-----|---------|-----------|
-| 1 | AREA_RATE | 0.025 |
-| 2 | LINEAR_RATE | 0.445 |
-| 3 | BASE_FIXED | 178.03 |
-| 4 | HOLE_PRICE | 25 |
-| 5 | POWDER_COAT | 45 |
-| 6 | SKIRT_SURCHARGE | 75 |
-| 7 | SKIRT_THRESHOLD | 6 |
-| 8 | GAUGE_24 | 1.0 |
-| 9 | GAUGE_20 | 1.3 |
-| 10 | GAUGE_18 | 1.4 |
-| 11 | GAUGE_16 | 1.6 |
-| 12 | GAUGE_14 | 1.8 |
-| 13 | GAUGE_12 | 2.7 |
-| 14 | GAUGE_10 | 3.4 |
-| 15 | MAT_galvanized | 1.0 |
-| 16 | MAT_copper | 3.0 |
-| 17+ | STORM_COLLAR_* | varies |
+The sheet uses a key-value format with rows like:
+
+| Key prefix | Example | Description |
+|------------|---------|-------------|
+| `EXT_ANCHOR` | 489.33 | Model coefficient |
+| `EXT_S_W`, `EXT_S_L`, `EXT_S_AREA` | varies | Model coefficients for pricing |
+| `HOLE_PRICE` | 25 | Per-hole surcharge |
+| `SKIRT_SURCHARGE` | 75 | Applied if skirt >= threshold |
+| `SKIRT_THRESHOLD` | 6 | Inches |
+| `PAINTED_MULTIPLIER` | 1.5 | Powder coat multiplier |
+| `GAUGE_*` | GAUGE_24=1.0, GAUGE_10=3.4 | Gauge multipliers |
+| `MAT_*` | MAT_galvanized=1.0, MAT_copper=3.0 | Material multipliers |
+| `SC_*` | SC_40=30, SC_100=60 | Storm collar prices by size (tenths of inches) |
+| `COEF_*` | varies | Model coefficients |
 
 Changes take effect within **5 minutes** (server cache TTL). No code changes or redeployment needed.
 
@@ -269,47 +326,43 @@ Changes take effect within **5 minutes** (server cache TTL). No code changes or 
 
 ## Pricing Formula
 
-**Files**: `config/pricing.ts` + `store/configStore.ts` + `api/create-order.ts`
+**Files**: `src/utils/pricing.ts` (shared) + `store/configStore.ts` (client) + `api/add-to-cart.ts` (server)
 
-```
-base = AREA_RATE * W * L + LINEAR_RATE * (W + L) + BASE_FIXED
-subtotal = base + holes * HOLE_PRICE + skirtSurcharge + powderCoat + stormCollarCosts
-total = subtotal * GAUGE_MULT[gauge] * MATERIAL_MULT[material]
-```
+The pricing formula is implemented in `computePricingBreakdown()` which is shared between client and server. See `src/utils/pricing.ts` for the full implementation.
 
-| Constant | Default Value |
-|----------|---------------|
-| AREA_RATE | $0.025/sq in |
-| LINEAR_RATE | $0.445/in |
-| BASE_FIXED | $178.03 |
-| HOLE_PRICE | $25/hole |
-| POWDER_COAT | $45 (only applied when `mat !== 'copper'`) |
-| SKIRT_SURCHARGE | $75 (if skirt >= 6") |
-| SKIRT_THRESHOLD | 6" |
+**Powder coat**: Charged only when `pc === true && mat !== 'copper'`. When copper is selected, powder coat state is preserved in the store but the charge and color swatch are not applied.
 
 **Gauge multipliers**: 24ga=1.0, 20ga=1.3, 18ga=1.4, 16ga=1.6, 14ga=1.8, 12ga=2.7, 10ga=3.4
 
 **Material multipliers**: Galvanized=1.0, Copper=3.0
 
-**Powder coat**: Charged only when `pc === true && mat !== 'copper'`. When copper is selected, powder coat state is preserved in the store but the charge and color swatch are not applied.
+---
 
-### Pricing Formula Derivation
+## Variant System
 
-The base formula constants (AREA_RATE, LINEAR_RATE, BASE_FIXED) were derived from the **Lifetime Chimney Supply** printed price list for 24ga galvanized steel (base case, no multipliers). The price list is a table with rows and columns from 16" to 58" in 2" increments.
+### Deterministic Hashing (`configHash` in `api/add-to-cart.ts`)
 
-**Derivation method** — the marginal cost of increasing one dimension by 1 inch is:
+Each configuration produces a deterministic hash using FNV-1a:
+- Config values are snapped to 1/8" (`r8 = Math.round(n * 8) / 8`) to prevent floating-point drift
+- Hash input includes: dimensions, material, gauge, toggles, holes, collar settings, price
+- Hash format: `CC-XXXXXXXX` (8-char hex)
+- Same config + same price = same hash → variant reused (no propagation delay)
 
-```
-d(price)/dL = AREA_RATE * W + LINEAR_RATE
-```
+### Variant Lifecycle
 
-From the price table:
-- Row 16, per-2" increment ≈ $1.69 → per inch: 16 × AREA_RATE + LINEAR_RATE = 0.845
-- Row 18, per-2" increment ≈ $1.80 → per inch: 18 × AREA_RATE + LINEAR_RATE = 0.895
+1. **Creation**: Via `productVariantsBulkCreate` GraphQL mutation
+2. **Propagation**: New variants take ~9-10s to appear on Shopify's storefront (eventual consistency)
+3. **Reuse**: Identical configs reuse existing variants — instant, no propagation needed
+4. **Cleanup**: Proactive cleanup at 95+ variants (target: 85), emergency cleanup on 422, cron every 3 days
+5. **Limit**: Shopify Basic plan = 100 variants max. Do NOT raise above 100.
 
-Solving: AREA_RATE = 0.025, LINEAR_RATE = 0.445, then BASE_FIXED = 198.67 - 0.025×256 - 0.445×32 = 178.03.
+### Image Attachment
 
-**Accuracy**: The formula matches the printed price list exactly at small sizes (16"–22" range). At larger sizes (40"+), there may be a small drift of a few dollars due to a possible quadratic per-dimension term in the original price table. This is under investigation — if confirmed, a `QUAD_RATE` constant will be added to the Google Sheet and code.
+- 3D canvas is captured as JPEG (white background composite) via `captureCanvasScreenshot()`
+- Uploaded to Shopify via `POST /api/variant-image` (separate from variant creation)
+- Attached to the variant so it appears in cart drawer and checkout
+- Upload is fire-and-forget for Add to Cart (drawer can open before image is ready)
+- Upload is `await`ed for Buy Now (prevents mobile browser from cancelling mid-flight)
 
 ---
 
@@ -354,11 +407,12 @@ All inputs snap to nearest 1/8 inch.
 ## Hole Placement Logic
 
 ### Holes (0-3)
-Each hole has: shape (round/rect), diameter or rect dimensions (3-30"), collar height (1-52"), centered flag, 4 offsets, storm collar toggle.
+Each hole has: shape (round/rect), diameter or rect dimensions (3-30"), collar height (1-52"), centered flag, 4 offsets, storm collar toggle (round only).
 
 ### Hole Shapes
 - **Round**: Defined by `dia` (diameter in inches). Shown as `⌀10"` in UI and order.
 - **Rectangle**: Defined by `rectWidth` × `rectLength`. Shown as `8" × 8" rect` in UI and order.
+- **Storm collar**: Only available for round holes. Hidden in UI when hole shape is `rect`.
 
 ### Centered Mode
 When centered, holes auto-position along the Z axis (length direction):
@@ -447,12 +501,12 @@ Per-hole labels are individually toggleable via "Show Labels" checkbox.
 
 4. **Collars**: Custom `BufferGeometry` cylinders (48 segments) for round holes; rectangular collar geometry for rect holes. Bottom vertices follow `getRoofY()` for smooth intersection with sloped roof. Top ring cap via `RingGeometry`.
 
-5. **Storm Collars**: Optional cylindrical flashing rings rendered above the collar opening. Price varies by hole diameter (looked up from Google Sheet `STORM_COLLAR_*` rows).
+5. **Storm Collars**: Optional cylindrical flashing rings rendered above the collar opening. Price varies by hole diameter (looked up from Google Sheet `SC_*` rows). Only available for round holes.
 
-6. **Bottom face** (sloped mode only): Flat `ExtrudeGeometry` with hole cutouts at skirt height.
+6. **Bottom face** (sloped mode only): Flat `ExtrudeGeometry` with hole cutouts at skirt height. Uses `three-csg-ts` CSG operations for hole subtraction.
 
 ### Hole Cutouts on Sloped Roof
-Grid vertices near hole boundaries snap to the hole radius/rect boundary. Triangles inside holes or entirely on the hole boundary are culled. No CSG library needed for lid cutouts (though three-csg-ts is available for other operations).
+Grid vertices near hole boundaries snap to the hole radius/rect boundary. Triangles inside holes or entirely on the hole boundary are culled.
 
 ---
 
@@ -483,8 +537,9 @@ The `<model-viewer>` element is portaled to light DOM on Shopify (via `#chase-co
 
 ## Materials
 
-Material rendering is handled by `mkMat()` in `geometry.ts`. Priority order:
+Material rendering is handled by `mkMat()` in `geometry.ts`. The result is memoized in `ChaseModel.tsx` via `useMemo` keyed on `mat`, `pc`, `pcCol`.
 
+Priority order:
 1. **Copper** (`mat === 'copper'`): Always renders copper color, regardless of powder coat state — `color=#e09a72, metalness=0.85, roughness=0.15`
 2. **Powder Coat** (`mat === 'galvanized' && pc === true`): User-selected color — `metalness=0.3, roughness=0.6`
 3. **Galvanized** (default): `color=#b8c4cc, metalness=0.9, roughness=0.25`
@@ -506,11 +561,10 @@ On startup, `loadPricingFromAPI()` fetches remote pricing. When it resolves, `on
 
 ### Session Config Restore (Back-from-Cart)
 
-**No Zustand `persist` middleware is used.** Config is stored in `sessionStorage` only when the user clicks "Add to Cart" and is about to be redirected:
+**No Zustand `persist` middleware is used.** Config is stored in `sessionStorage` only when the user clicks "Add to Cart" or "Buy Now" and is about to be redirected:
 
 ```
 saveConfigForRestore()   → saves config to sessionStorage key 'chase-cover-restore'
-window.location.href = checkout_url
 ```
 
 On page mount, `restoreConfigIfNeeded()` is called:
@@ -563,11 +617,46 @@ On page mount, `restoreConfigIfNeeded()` is called:
 
 ---
 
+## Debugging
+
+### Client-Side Debug Logging
+
+All `console.log` calls in `App.tsx` are gated behind `window.__chaseDebug`. To enable verbose cart/image logging:
+
+```javascript
+window.__chaseDebug = true
+```
+
+This shows tagged logs like `[CART]`, `[IMG]`, `[BUY]` with timing breakdowns. `console.warn` and `console.error` are always visible.
+
+### Server-Side Debug Telemetry
+
+The client sends debug events to `POST /api/cart-debug` via `emitCartDebug()`. These include:
+- API results, retry attempts, section readiness
+- Cart DOM snapshots, section mount points
+- Image upload status
+- Drawer open/close events
+
+These are visible in Vercel function logs.
+
+### Origin Validation
+
+API handlers log warnings for requests from unknown origins via `warnUnknownOrigin()` in `lib/shopify-auth.ts`. Known origins: kaminos.com, chase-cover-configurator*.vercel.app, localhost.
+
+---
+
 ## Key Decisions & History
 
-- **Shopify auth**: `client_credentials` fails when app org ≠ store org. Use static `SHOPIFY_ACCESS_TOKEN` from a **Store Admin custom app** (created in the client store's Admin > Settings > Apps > Develop apps).
+- **Variant-based cart flow**: The primary cart flow uses Shopify product variants (not Draft Orders). Each config creates a deterministic variant on a single product. This integrates naturally with Shopify's cart, checkout, and order system.
+- **Shopify auth**: `client_credentials` fails when app org ≠ store org. Use static `SHOPIFY_ACCESS_TOKEN` from a **Store Admin custom app** (created in the client store's Admin > Settings > Apps > Develop apps). Auth is shared via `lib/shopify-auth.ts`.
 - **CSS isolation**: Shadow DOM used for Shopify embedding. `globals-scoped.css` is auto-synced from `globals.css` via a pre-build script — only ever edit `globals.css`.
 - **Hole position drift fix**: Unchecking "Centered on Cover" previously caused slight position drift due to 1/8" rounding. Fixed by removing rounding in the centered→offset conversion.
 - **Copper + powder coat**: Copper material always renders copper color. The `pc` boolean state is preserved so switching back to galvanized re-applies the powder coat color.
 - **Session persistence**: Zustand `persist` middleware was removed. Config is now saved to `sessionStorage` only immediately before cart redirect, and cleared immediately after restoration. This gives "back from cart restores config" without "refresh loads last session".
-- **Cart image**: 3D canvas is captured as base64 PNG and uploaded to Shopify Files via `stagedUploadsCreate` + `fileCreate` GraphQL. Requires `write_files` scope on the Shopify app. Fails silently — order is always created even if image upload fails.
+- **Cart image**: 3D canvas is captured as JPEG (white background composite) and uploaded to Shopify via `stagedUploadsCreate` + product image REST API. Requires `write_files` scope. Fails silently — cart is always updated even if image upload fails.
+- **$0 price prevention**: Cart drawer sections are validated before display. Sections containing `$0` are rejected and re-fetched (up to 18s total). Never redirects to `/cart` page (which would also show $0).
+- **429 rate limiting**: Shopify storefront 429s are retried with backoff (not treated as errors). Users never see rate limit messages.
+- **Storm collar for rect holes**: Storm collar toggle is completely hidden (not just disabled) when hole shape is rectangle. Switching shape to rect auto-disables storm collar.
+- **Variant limit**: Shopify Basic plan = 100 variants max. Do NOT raise above 100. Proactive cleanup runs at 95+, emergency cleanup on 422.
+- **Google Sheets fallback**: If Google Sheets is unreachable, pricing falls back to hardcoded defaults in `lib/pricing-sheet.ts`. The configurator keeps working rather than breaking.
+- **Image size limit**: Server rejects images > ~500KB to prevent OOM (413 response).

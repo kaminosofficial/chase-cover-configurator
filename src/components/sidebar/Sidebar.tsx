@@ -50,7 +50,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
   const breakdown = computePricingBreakdown(config, PRICING, scTotal);
 
   const bdRows: { label: string; value: string; cls: string }[] = [
-    { label: `Base Price (${config.w}" x ${config.l}")`, value: fmt(breakdown.basePrice), cls: 'bd-row' },
+    { label: `Base Price (${config.w}" x ${config.l}" x ${config.sk}" skirt)`, value: fmt(breakdown.basePrice), cls: 'bd-row' },
     { label: `${holes} Flue Hole${holes !== 1 ? 's' : ''}`, value: fmt(breakdown.holesCost), cls: 'bd-row' },
     ...scItems.map(item => ({
       label: `Storm Collar - ${item.label}`,
@@ -59,15 +59,16 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
     })),
     ...(breakdown.skirtCost ? [{ label: 'Oversized Skirt Surcharge', value: fmt(breakdown.skirtCost), cls: 'bd-row' }] : []),
     { label: 'Subtotal', value: fmt(breakdown.rawCost), cls: 'bd-sub' },
-    ...(breakdown.gaugeFactor !== 1 ? [{ label: `${config.gauge} ga Material`, value: 'x ' + breakdown.gaugeFactor.toFixed(2), cls: 'bd-row' }] : []),
     ...(breakdown.materialFactor !== 1 ? [{ label: config.mat === 'copper' ? 'Copper' : 'Material Multiplier', value: 'x ' + breakdown.materialFactor.toFixed(2), cls: 'bd-row' }] : []),
     ...(config.pc ? [{ label: 'Powder Coating', value: 'x ' + breakdown.paintedMultiplier.toFixed(2), cls: 'bd-row' }] : []),
-    { label: 'TOTAL ESTIMATE', value: fmt(breakdown.total), cls: 'bd-total' },
+    { label: 'TOTAL', value: fmt(breakdown.total), cls: 'bd-total' },
   ];
 
   return (
     <div className="sidebar">
-      <div className="sidebar-scroll">
+      <div className={`sidebar-scroll${isSubmitting ? ' sidebar-scroll--disabled' : ''}`}>
+        <h1 className="sidebar-main-title">Chase Cover Configurator</h1>
+
         <section className={`project-info-card${introExpanded ? ' open' : ''}`}>
           <button
             className={`project-info-toggle${introExpanded ? ' open' : ''}`}
@@ -95,7 +96,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
               </div>
 
               <div className="measure-note">
-                You must add an extra <strong>1/2"</strong> to both the length and width measurements for proper
+                You must add an extra <strong>1/2''</strong> to both the length and width measurements for proper
                 fitment. If you need a custom shape, please <a href="tel:+18887779789">give us a call</a>.{' '}
                 Need help measuring? <a href="https://kaminos.com/blogs/news/how-to-measure-for-a-chase-cover" target="_blank" rel="noreferrer">Click here</a>.
               </div>
@@ -104,7 +105,9 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
         </section>
 
         <div className="section">
-          <div className="section-title">Cover Dimensions</div>
+          <div className="section-title">
+            <span className="section-title-label">Cover Dimensions</span>
+          </div>
           <DimensionFields />
           <label className="centered-check" style={{ marginTop: 8 }}>
             <input
@@ -117,33 +120,35 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
         </div>
 
         <div className="section">
-          <div className="section-title">Options</div>
+          <div className="section-title">
+            <span className="section-title-label">Options</span>
+          </div>
           <ToggleRow id="drip" label="Drip Edge" tooltip="A drip edge extends beyond the skirt at a 45-degree angle, directing rainwater away from the chase to prevent water damage." />
           <ToggleRow id="diag" label="Diagonal Crease" tooltip="Diagonal creases from each corner create a peaked surface that channels water and debris off the cover." />
         </div>
 
         <div className="section">
           <div className="section-title">
-            Flue Holes
+            <span className="section-title-label">Flue Holes</span>
             <InfoTooltip text="Flue holes accommodate chimney pipes passing through the cover. Select how many openings your chase requires." />
           </div>
           <HoleSelector />
-          {holes >= 1 && <CollarGroup id="A" label="Hole 1 (Left)" />}
-          {holes >= 2 && <CollarGroup id="B" label={holes === 2 ? 'Hole 2 (Right)' : 'Hole 2 (Middle)'} />}
-          {holes === 3 && <CollarGroup id="C" label="Hole 3 (Right)" />}
+          {holes >= 1 && <CollarGroup id="A" label="Hole 1" />}
+          {holes >= 2 && <CollarGroup id="B" label="Hole 2" />}
+          {holes === 3 && <CollarGroup id="C" label="Hole 3" />}
         </div>
 
         <div className="section">
           <div className="section-title">
-            Material &amp; Gauge
+            <span className="section-title-label">Material</span>
             <InfoTooltip text="Stainless steel is durable and cost-effective. Copper develops a natural patina over time and offers superior longevity." />
           </div>
           <MaterialChips />
-          <div className="field-row" style={{ marginTop: 10 }}>
+          <div className="field-row section-subgroup section-subgroup--material">
             <div className="field">
-              <label style={{ display: 'flex', alignItems: 'center' }}>
+              <label className="subsection-label">
                 Gauge
-                <InfoTooltip text="Gauge indicates metal thickness - lower numbers are thicker and more durable. 24ga is standard for most residential applications." />
+                <InfoTooltip text="Gauge indicates metal thickness. 24ga is the lightest option, 22ga is a sturdier upgrade, and 20ga is the heaviest option we offer." />
               </label>
               <GaugeSelect />
             </div>
@@ -151,21 +156,27 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
         </div>
 
         {config.mat !== 'copper' && (
-          <div className="section">
-            <div className="section-title">POWDER COATING</div>
-            <ToggleRow id="pc" label="Color Options" tooltip="Powder coating adds a baked-on color finish for UV protection and a custom appearance." />
+          <div className="section section--powder">
+            <div className="section-title">
+              <span className="section-title-label">Powder Coating</span>
+              <InfoTooltip text="Powder coating adds a baked-on color finish for UV protection and a custom appearance." />
+            </div>
+            <ToggleRow id="pc" label="Color Options" />
             {pc && <PowderCoatSection onOpenRal={onOpenRal} />}
           </div>
         )}
 
         <div className="section">
-          <div className="section-title">Special Notes</div>
+          <div className="section-title">
+            <span className="section-title-label">Special Notes</span>
+            <span className="section-title-meta">(optional)</span>
+          </div>
           <NotesField />
         </div>
       </div>
 
       <div className="price-bar">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+        <div className="price-header">
           <button
             className={`bd-toggle${bdOpen ? ' open' : ''}`}
             onClick={() => setBdOpen(!bdOpen)}

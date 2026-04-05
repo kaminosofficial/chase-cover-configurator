@@ -9,12 +9,16 @@ import { cameraActions } from './utils/cameraRef';
 import { RalModal } from './components/ral/RalModal';
 import { formatFrac } from './utils/format';
 import { getHoleSizeInches, getHoleEdgeOffsets, holeWorld } from './utils/geometry';
+import { isApiReachable, loadPricingFromAPI } from './config/pricing';
 
 declare global {
-  interface Window { QRious: any; }
+  interface Window { QRious: any; __chaseDebug?: boolean; }
 }
 
 declare const __LOCAL_IP__: string | undefined;
+
+/** Debug flag â€” set `window.__chaseDebug = true` in console to enable verbose logging. */
+const DEBUG = () => !!(window as any).__chaseDebug;
 
 interface AppProps {
   productId?: string;
@@ -126,7 +130,7 @@ function formatHoleSummary(code: 'A' | 'B' | 'C', index: number, collar: CollarS
 function formatHoleCutoutSummary(code: 'A' | 'B' | 'C', config: ReturnType<typeof useConfigStore.getState>) {
   const hole = holeWorld(code, config);
   const offsets = getHoleEdgeOffsets(hole, config);
-  return `[${code}1(Top): ${formatFrac(offsets.top)}\" ${code}2(Right): ${formatFrac(offsets.right)}\" ${code}3(Bottom): ${formatFrac(offsets.bottom)}\" ${code}4(Left): ${formatFrac(offsets.left)}\"]`;
+  return `Top: ${formatFrac(offsets.top)}" | Right: ${formatFrac(offsets.right)}" | Bottom: ${formatFrac(offsets.bottom)}" | Left: ${formatFrac(offsets.left)}"`;
 }
 
 function updateCartBadgeCount(itemCount: number) {
@@ -197,144 +201,1305 @@ function tryOpenCartUi() {
   return false;
 }
 
-/**
- * After /cart/add.js succeeds for a NEW variant, the Shopify storefront may
- * not have propagated the price yet (returns $0). The cart stores variant_id
- * + quantity — the price is looked up live on each /cart.js call. So we poll
- * /cart.js until ALL items have non-zero prices, then fetch fresh sections.
- *
- * Returns the fresh sections HTML (or null) so the caller can apply them
- * before opening the drawer — the user never sees $0.
- */
-async function waitForCartPriceUpdate(
-  sectionIds: string[],
-  maxWaitMs = 5000
-): Promise<{ sections: Record<string, string> | null; priceOk: boolean }> {
+function isCartUiOpen(): boolean {
+  if (document.querySelector('details[id*="CartDrawer"][open], details[data-cart-drawer][open]')) {
+    return true;
+  }
+
+  if (document.querySelector('cart-drawer[open], cart-notification[open]')) {
+    return true;
+  }
+
+  if (document.querySelector('cart-drawer.active, cart-drawer.is-open, cart-notification.active, cart-notification.is-open, [id*="CartDrawer"].active, [id*="CartDrawer"].is-open')) {
+    return true;
+  }
+
+  return false;
+}
+
+function forceOpenCartUi(): boolean {
+  const detailsDrawer = document.querySelector('details[id*="CartDrawer"], details[data-cart-drawer]') as HTMLDetailsElement | null;
+  if (detailsDrawer) {
+    detailsDrawer.open = true;
+    return true;
+  }
+
+  const cartDrawer = document.querySelector('cart-drawer, cart-notification, [id*="CartDrawer"]') as (HTMLElement & { open?: () => void; show?: () => void }) | null;
+  if (cartDrawer) {
+    cartDrawer.setAttribute('open', '');
+    cartDrawer.classList.add('active', 'is-open');
+    if (typeof cartDrawer.open === 'function') cartDrawer.open();
+    if (typeof cartDrawer.show === 'function') cartDrawer.show();
+    return true;
+  }
+
+  return false;
+}
+
+function releasePageScrollLockIfCartClosed(reason: string) {
+  if (isCartUiOpen()) return;
+
+  document.body.style.overflow = '';
+  document.documentElement.style.overflow = '';
+  document.body.classList.remove('overflow-hidden', 'no-scroll');
+  document.documentElement.classList.remove('overflow-hidden', 'no-scroll');
+  DEBUG() && console.log(`[CART] Released page scroll lock (${reason})`);
+}
+
+function getChaseApiBase(): string {
+  return (window as any).__chaseApiBase || '';
+}
+
+function compactTextSnippet(value: string | null | undefined, maxLen = 220): string {
+  return String(value || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function buildExpectedPriceTokens(priceText: string | null | undefined): string[] {
+  const raw = String(priceText || '').trim();
+  if (!raw) return [];
+
+  const normalized = raw.replace(/[$,\s]/g, '');
+  const price = Number(normalized);
+  if (!Number.isFinite(price)) {
+    return Array.from(new Set([raw, `$${raw}`]));
+  }
+
+  const formatted = price.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+  return Array.from(new Set([
+    raw,
+    normalized,
+    `$${raw}`,
+    `$${normalized}`,
+    formatted,
+    `$${formatted}`,
+  ]));
+}
+
+function buildExpectedImageTokens(imageUrl: string | null | undefined): string[] {
+  const raw = String(imageUrl || '').trim();
+  if (!raw) return [];
+
+  const filename = raw.split('/').pop()?.split('?')[0] || raw;
+  return Array.from(new Set([raw, filename]));
+}
+
+function inspectRenderedSectionHtml(
+  html: string,
+  expected?: { variantId?: number; priceText?: string; imageUrl?: string | null },
+) {
+  const priceTokens = buildExpectedPriceTokens(expected?.priceText);
+  const imageTokens = buildExpectedImageTokens(expected?.imageUrl);
+  const hasEmptyStateMarkup = /your cart is empty|drawer__inner-empty|is-empty|cart__warnings/i.test(html);
+  const hasCartItemMarkup = /CartDrawer-Item-\d+|class="[^"]*\bcart-item\b|cart-item__media|name="updates\[[^\]]+\]"/i.test(html);
+  const hasLoadingState = /Loading\.\.\./i.test(html);
+
+  return {
+    length: html.length,
+    hasZeroPrice: /\$0(?:\.00)?/.test(html),
+    hasExpectedPrice: priceTokens.length > 0 ? priceTokens.some((token) => html.includes(token)) : null,
+    hasVariantId: expected?.variantId ? html.includes(String(expected.variantId)) : null,
+    hasImageUrl: imageTokens.length > 0 ? imageTokens.some((token) => html.includes(token)) : null,
+    hasCartItemMarkup,
+    hasLoadingState,
+    isEmpty: hasEmptyStateMarkup && !hasCartItemMarkup && !hasLoadingState,
+    snippet: compactTextSnippet(html, 260),
+  };
+}
+
+function isPrimaryCartSectionId(sectionId: string): boolean {
+  const normalized = sectionId.toLowerCase();
+  return normalized.includes('cart-drawer')
+    || normalized.includes('cart-notification')
+    || normalized.includes('cart-items')
+    || normalized === 'cart';
+}
+
+function selectUsableRenderedSections(
+  sections: Record<string, string> | null,
+  expected?: { variantId?: number; priceText?: string; imageUrl?: string | null },
+  requirements?: { requirePrice?: boolean; requireImage?: boolean; requireVariant?: boolean },
+) {
+  if (!sections) {
+    return { usableSections: null as Record<string, string> | null, rejectedSections: null as Record<string, any> | null };
+  }
+
+  const usableSections: Record<string, string> = {};
+  const rejectedSections: Record<string, any> = {};
+
+  for (const [sectionId, html] of Object.entries(sections)) {
+    if (!isPrimaryCartSectionId(sectionId)) {
+      usableSections[sectionId] = html;
+      continue;
+    }
+
+    const summary = inspectRenderedSectionHtml(html, expected);
+    // Only reject sections that are empty or show $0.
+    // Do NOT require exact price match â€” line totals differ from unit price
+    // when quantity > 1 (e.g. 2Ã—$285 = $570, but expectedPriceText is "285.00").
+    const shouldReject = summary.isEmpty
+      || summary.hasZeroPrice
+      || (!!requirements?.requireVariant && !!expected?.variantId && summary.hasVariantId === false)
+      || (!!requirements?.requireImage && !!expected?.imageUrl && summary.hasImageUrl === false);
+
+    if (shouldReject) {
+      rejectedSections[sectionId] = summary;
+      continue;
+    }
+
+    usableSections[sectionId] = html;
+  }
+
+  return {
+    usableSections: Object.keys(usableSections).length > 0 ? usableSections : null,
+    rejectedSections: Object.keys(rejectedSections).length > 0 ? rejectedSections : null,
+  };
+}
+
+function summarizeCartItemForDebug(item: any) {
+  if (!item) return null;
+
+  return {
+    id: item.id ?? null,
+    variantId: item.variant_id ?? null,
+    key: item.key ?? null,
+    title: item.title ?? null,
+    price: item.price ?? null,
+    finalLinePrice: item.final_line_price ?? null,
+    image: item.image ?? item.featured_image?.url ?? null,
+  };
+}
+
+function summarizeSectionsForDebug(
+  sections: Record<string, string> | null,
+  expected?: { variantId?: number; priceText?: string; imageUrl?: string | null },
+) {
+  if (!sections) return null;
+
+  return Object.fromEntries(
+    Object.entries(sections).map(([sectionId, html]) => {
+      return [sectionId, inspectRenderedSectionHtml(html, expected)];
+    }),
+  );
+}
+
+function collectCartDomSnapshot() {
+  const selectors = [
+    'cart-drawer',
+    'cart-notification',
+    'details[id*="CartDrawer"]',
+    '[id="CartDrawer"]',
+    '[id*="CartDrawer"]',
+  ];
+
+  const seen = new Set<Element>();
+  const elements: Element[] = [];
+  for (const selector of selectors) {
+    for (const element of document.querySelectorAll(selector)) {
+      if (seen.has(element)) continue;
+      seen.add(element);
+      elements.push(element);
+    }
+  }
+
+  return elements.slice(0, 8).map((element, index) => {
+    const text = compactTextSnippet(element.textContent || '', 180);
+    const moneyMatches = Array.from(new Set((text.match(/\$\s?\d[\d,]*(?:\.\d{2})?/g) || []).slice(0, 6)));
+    return {
+      index,
+      tag: element.tagName.toLowerCase(),
+      id: (element as HTMLElement).id || null,
+      className: (element as HTMLElement).className || null,
+      openAttr: element.hasAttribute('open'),
+      hidden: element instanceof HTMLElement ? element.hidden : null,
+      moneyTokens: moneyMatches,
+      textSnippet: text,
+    };
+  });
+}
+
+function collectSectionMountSnapshot(sectionIds: string[]) {
+  return sectionIds.map((sectionId) => {
+    const selectorGroups = [
+      { kind: 'shopify-section', selector: `[id="shopify-section-${sectionId}"]` },
+      { kind: 'data-section', selector: `[data-section="${sectionId}"]` },
+      { kind: 'raw-id', selector: `[id="${sectionId}"]` },
+    ];
+
+    const matches = selectorGroups.flatMap(({ kind, selector }) =>
+      Array.from(document.querySelectorAll(selector)).map((element) => ({
+        kind,
+        tag: element.tagName.toLowerCase(),
+        id: (element as HTMLElement).id || null,
+        className: (element as HTMLElement).className || null,
+      }))
+    );
+
+    return {
+      sectionId,
+      matchCount: matches.length,
+      matches: matches.slice(0, 6),
+    };
+  });
+}
+
+function cartUiContainsExpectedImage(imageUrl: string | null | undefined): boolean {
+  const tokens = buildExpectedImageTokens(imageUrl);
+  if (tokens.length === 0) return true;
+
+  const selectors = [
+    'cart-drawer',
+    'cart-notification',
+    'details[id*="CartDrawer"]',
+    '[id="CartDrawer"]',
+    '[id*="CartDrawer"]',
+  ];
+
+  const seen = new Set<Element>();
+  for (const selector of selectors) {
+    for (const element of document.querySelectorAll(selector)) {
+      if (seen.has(element)) continue;
+      seen.add(element);
+
+      const html = element instanceof HTMLElement ? element.innerHTML : '';
+      if (tokens.some((token) => html.includes(token))) {
+        return true;
+      }
+
+      for (const image of element.querySelectorAll('img')) {
+        if (tokens.some((token) => image.currentSrc.includes(token) || image.src.includes(token))) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+function emitCartDebug(event: string, payload: Record<string, any>) {
+  const apiBase = getChaseApiBase();
+  if (!apiBase) return;
+
+  const body = JSON.stringify({
+    event,
+    at: new Date().toISOString(),
+    href: window.location.href,
+    routeRoot: getShopifyRouteRoot(),
+    ua: navigator.userAgent,
+    payload,
+  });
+
+  fetch(`${apiBase}/api/cart-debug`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    keepalive: true,
+  }).catch(() => undefined);
+}
+
+function applySectionUpdatesPreservingCartUi(sections: Record<string, string>, reason: string) {
+  const wasOpen = isCartUiOpen();
+  applySectionUpdates(sections);
+
+  if (!wasOpen) return;
+
+  window.requestAnimationFrame(() => {
+    forceOpenCartUi();
+    window.setTimeout(() => releasePageScrollLockIfCartClosed(reason), 150);
+  });
+}
+
+function removeConfigurationOptionRows(root: ParentNode) {
+  const removePropertyRow = (element: Element) => {
+    const wrapper = element.closest('.product-option') || element.parentElement;
+    if (wrapper) {
+      wrapper.remove();
+      return;
+    }
+
+    const next = element.nextElementSibling;
+    if (next?.tagName.toLowerCase() === 'dd') next.remove();
+    element.remove();
+  };
+
+  const setInlinePropertyRow = (element: Element, label: string, value: string) => {
+    const labelNode = document.createElement('span');
+    labelNode.textContent = `${label}:`;
+    labelNode.style.color = 'rgba(18, 18, 18, 0.55)';
+    labelNode.style.fontWeight = '400';
+
+    element.replaceChildren(labelNode, document.createTextNode(` ${value}`));
+  };
+
+  const normalizeCartPropertyLabel = (raw: string): string => {
+    const text = raw.replace(/\s+/g, ' ').trim();
+    if (!text) return text;
+    if (/^Holes:?$/i.test(text)) return '';
+
+    const holeMatch = text.match(/^H(\d)(?:\s*)\(([^)]+)\):?$/i) || text.match(/^Hole\s*(\d)(?:\s*)\(([^)]+)\):?$/i);
+    if (holeMatch) {
+      return `Hole ${holeMatch[1]}(${holeMatch[2]})`;
+    }
+
+    const simpleHoleMatch = text.match(/^H(\d):?$/i);
+    if (simpleHoleMatch) {
+      return `Hole ${simpleHoleMatch[1]}`;
+    }
+
+    if (/^(?:H\d|Hole\s*\d)\s+Position:?$/i.test(text)) {
+      return 'Position';
+    }
+
+    return text;
+  };
+
+  for (const dt of root.querySelectorAll('dt')) {
+    const text = dt.textContent?.replace(/\s+/g, ' ').trim() || '';
+    if (!/^Configuration:?$/i.test(text)) continue;
+    removePropertyRow(dt);
+  }
+
+  for (const dt of root.querySelectorAll('dt')) {
+    const text = dt.textContent?.replace(/\s+/g, ' ').trim() || '';
+    const normalized = normalizeCartPropertyLabel(text);
+    if (!normalized) {
+      removePropertyRow(dt);
+      continue;
+    }
+    if (normalized !== text) {
+      dt.textContent = normalized;
+    }
+  }
+
+  const rowSelectors = ['.product-option', '.cart-item__details > div', '.cart-item__details li', 'li', 'p', 'div'];
+  for (const selector of rowSelectors) {
+    for (const element of root.querySelectorAll(selector)) {
+      const text = element.textContent?.replace(/\s+/g, ' ').trim() || '';
+      if (!/^Configuration:\s*CC-[A-Za-z0-9_-]+/i.test(text)) continue;
+      element.remove();
+    }
+  }
+
+  const flatRowSelectors = ['.cart-item__details > div', '.cart-item__details li', 'li', 'p'];
+  for (const selector of flatRowSelectors) {
+    for (const element of root.querySelectorAll(selector)) {
+      if (element.children.length > 0) continue;
+
+      const text = element.textContent?.replace(/\s+/g, ' ').trim() || '';
+      if (!text) continue;
+
+      if (/^Holes:\s*\d+/i.test(text)) {
+        element.remove();
+        continue;
+      }
+
+      const optionsMatch = text.match(/^Options:\s*(.+)$/i);
+      if (optionsMatch) {
+        const normalizedOptions = optionsMatch[1]
+          .replace(/\s*[·•]\s*/g, ' | ')
+          .replace(/\s+\.\s+/g, ' | ')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+        setInlinePropertyRow(element, 'Options', normalizedOptions);
+        continue;
+      }
+
+      const holeValueMatch = text.match(/^(?:H|Hole\s*)(\d)(?:\s*)\(([^)]+)\):\s*(.+)$/i);
+      if (holeValueMatch) {
+        setInlinePropertyRow(element, `Hole ${holeValueMatch[1]}(${holeValueMatch[2]})`, holeValueMatch[3]);
+        continue;
+      }
+
+      const simpleHoleValueMatch = text.match(/^H(\d):\s*(.+)$/i);
+      if (simpleHoleValueMatch) {
+        setInlinePropertyRow(element, `Hole ${simpleHoleValueMatch[1]}`, simpleHoleValueMatch[2]);
+        continue;
+      }
+
+      const positionValueMatch = text.match(/^(?:H\d|Hole\s*\d)\s+Position:\s*(.+)$/i);
+      if (positionValueMatch) {
+        setInlinePropertyRow(element, 'Position', positionValueMatch[1]);
+      }
+    }
+  }
+}
+
+function getShopifyRouteRoot(): string {
+  const root = (window as Window & { Shopify?: { routes?: { root?: string } } }).Shopify?.routes?.root || '/';
+  return root.endsWith('/') ? root : `${root}/`;
+}
+
+function buildShopifyPath(path: string, searchParams?: Record<string, string | number | undefined>): string {
+  const normalizedPath = path.replace(/^\/+/, '');
+  const url = new URL(`${getShopifyRouteRoot()}${normalizedPath}`, window.location.origin);
+
+  if (searchParams) {
+    for (const [key, value] of Object.entries(searchParams)) {
+      if (value == null) continue;
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  return `${url.pathname}${url.search}`;
+}
+
+function getCurrentPageContextPath(): string {
+  return `${window.location.pathname}${window.location.search}`;
+}
+
+function isIPhoneSafari(): boolean {
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isSafari = /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo/i.test(ua);
+  return isIOS && isSafari;
+}
+
+function getForegroundWaitBudgetMs(tag: 'CART' | 'BUY'): number {
+  const iPhoneSafari = isIPhoneSafari();
+  const ms = iPhoneSafari ? 30000 : 25000;
+  DEBUG() && console.log(`[${tag}] Foreground wait budget: ${ms}ms | routeRoot=${getShopifyRouteRoot()} | page=${getCurrentPageContextPath()} | iPhoneSafari=${iPhoneSafari}`);
+  return ms;
+}
+
+function formatCheckoutErrorMessage(rawMessage: string, action: 'cart' | 'buy'): string {
+  const message = (rawMessage || '').trim();
+  const lower = message.toLowerCase();
+  const actionLabel = action === 'cart' ? 'add this item to the cart' : 'start checkout';
+
+  if (lower.includes('request timed out') || lower.includes('timed out')) {
+    return `This is taking longer than expected, so we couldnâ€™t ${actionLabel}. Please refresh the page and try again. If it keeps happening, please check your connection and try once more.`;
+  }
+
+  if (lower.includes('network error') || lower.includes('failed to fetch') || lower.includes('load failed')) {
+    return `We hit a network issue while trying to ${actionLabel}. Please refresh the page and try again. If the problem continues, please check your connection and try once more.`;
+  }
+
+  if (lower.includes('shopify is still finalizing your price')) {
+    return `Your configuration is still syncing with Shopify. Please wait a moment, then refresh the page and try again.`;
+  }
+
+  if (lower.includes('http error') || lower.includes('internal server error') || lower.includes('failed to create variant')) {
+    return `We couldnâ€™t ${actionLabel} right now. Please refresh the page and try again in a moment.`;
+  }
+
+  return `${message || `We couldnâ€™t ${actionLabel} right now.`} Please refresh the page and try again.`;
+}
+
+const ADD_TO_CART_API_TIMEOUT_MS = 30000;
+const ADD_TO_CART_API_MAX_ATTEMPTS = 3;
+const RETRYABLE_ADD_TO_CART_STATUS = new Set([429, 502, 503, 504]);
+
+function getAddToCartApiRetryDelayMs(attempt: number): number {
+  const base = Math.min(1800, 450 * (2 ** Math.max(0, attempt - 1)));
+  return base + Math.round(Math.random() * 250);
+}
+
+async function postAddToCartApi(opts: {
+  apiBase: string;
+  payload: Record<string, any>;
+  tag: 'CART' | 'BUY';
+}): Promise<{
+  res: Response;
+  data: any;
+  attempts: number;
+  totalMs: number;
+}> {
+  const { apiBase, payload, tag } = opts;
+  const requestBody = JSON.stringify(payload);
+  const startedAt = performance.now();
+  let lastFetchErr: any = null;
+  let lastWasTimeout = false;
+
+  for (let attempt = 1; attempt <= ADD_TO_CART_API_MAX_ATTEMPTS; attempt++) {
+    const attemptStartedAt = performance.now();
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), ADD_TO_CART_API_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(`${apiBase}/api/add-to-cart`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
+        signal: controller.signal,
+      });
+
+      const data = await res.json().catch(() => null);
+      const attemptMs = Math.round(performance.now() - attemptStartedAt);
+      const totalMs = Math.round(performance.now() - startedAt);
+      const shouldRetry = !res.ok
+        && RETRYABLE_ADD_TO_CART_STATUS.has(res.status)
+        && attempt < ADD_TO_CART_API_MAX_ATTEMPTS;
+
+      if (!shouldRetry) {
+        if (attempt > 1) {
+          emitCartDebug('api-request-recovered', {
+            tag,
+            attempt,
+            status: res.status,
+            ok: res.ok,
+            attemptMs,
+            totalMs,
+          });
+        }
+        return { res, data, attempts: attempt, totalMs };
+      }
+
+      const delayMs = getAddToCartApiRetryDelayMs(attempt);
+      console.warn(`[${tag}] /api/add-to-cart retry ${attempt}/${ADD_TO_CART_API_MAX_ATTEMPTS} after HTTP ${res.status} (${attemptMs}ms)`);
+      emitCartDebug('api-request-retry', {
+        tag,
+        attempt,
+        maxAttempts: ADD_TO_CART_API_MAX_ATTEMPTS,
+        reason: 'http',
+        status: res.status,
+        attemptMs,
+        totalMs,
+        delayMs,
+        error: data?.error || null,
+      });
+      await new Promise(resolve => window.setTimeout(resolve, delayMs));
+    } catch (fetchErr: any) {
+      const attemptMs = Math.round(performance.now() - attemptStartedAt);
+      const totalMs = Math.round(performance.now() - startedAt);
+      const timedOut = fetchErr?.name === 'AbortError';
+      lastFetchErr = fetchErr;
+      lastWasTimeout = timedOut;
+
+      if (timedOut || attempt >= ADD_TO_CART_API_MAX_ATTEMPTS) {
+        emitCartDebug('api-request-failed', {
+          tag,
+          attempt,
+          maxAttempts: ADD_TO_CART_API_MAX_ATTEMPTS,
+          reason: timedOut ? 'timeout' : 'network',
+          attemptMs,
+          totalMs,
+          message: fetchErr?.message || null,
+        });
+        break;
+      }
+
+      const delayMs = getAddToCartApiRetryDelayMs(attempt);
+      console.warn(`[${tag}] /api/add-to-cart retry ${attempt}/${ADD_TO_CART_API_MAX_ATTEMPTS} after network error: ${fetchErr?.message || 'unknown'} (${attemptMs}ms)`);
+      emitCartDebug('api-request-retry', {
+        tag,
+        attempt,
+        maxAttempts: ADD_TO_CART_API_MAX_ATTEMPTS,
+        reason: 'network',
+        attemptMs,
+        totalMs,
+        delayMs,
+        message: fetchErr?.message || null,
+      });
+      await new Promise(resolve => window.setTimeout(resolve, delayMs));
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  if (lastWasTimeout) {
+    throw new Error('Request timed out. Please check your connection and try again.');
+  }
+
+  DEBUG() && console.warn(`[${tag}] /api/add-to-cart exhausted retries`, lastFetchErr?.message || lastFetchErr);
+  throw new Error('Network error. Please check your connection and try again.');
+}
+
+function findTargetCartItem(cartData: any, variantId: number) {
+  return (cartData?.items || []).find(
+    (item: any) => item.variant_id === variantId || item.id === variantId
+  ) || null;
+}
+
+function getCartItemPrice(item: any): number {
+  const value = item?.final_line_price ?? item?.price ?? 0;
+  return typeof value === 'number' ? value : Number(value) || 0;
+}
+
+function extractRenderedSections(payload: any, sectionIds: string[]): Record<string, string> | null {
+  if (!payload?.sections || typeof payload.sections !== 'object') return null;
+
+  const rendered: Record<string, string> = {};
+  for (const sectionId of sectionIds) {
+    const html = payload.sections?.[sectionId];
+    if (typeof html === 'string' && html.trim()) {
+      rendered[sectionId] = html;
+    }
+  }
+
+  return Object.keys(rendered).length > 0 ? rendered : null;
+}
+
+function selectPendingCartSections(
+  sections: Record<string, string> | null,
+  variantId: number,
+  expectedPriceText?: string,
+) {
+  return selectUsableRenderedSections(
+    sections,
+    { variantId, priceText: expectedPriceText },
+    { requireVariant: true },
+  ).usableSections;
+}
+
+async function fetchCartState(tag: string): Promise<any | null> {
+  try {
+    const res = await fetch(
+      buildShopifyPath('cart.js', { _: Date.now() }),
+      { cache: 'no-store' }
+    );
+    if (!res.ok) {
+      console.warn(`[${tag}] Cart JSON fetch failed: HTTP ${res.status}`);
+      return null;
+    }
+    return await res.json();
+  } catch (e: any) {
+    console.warn(`[${tag}] Cart JSON fetch error: ${e?.message}`);
+    return null;
+  }
+}
+
+async function fetchRenderedSections(sectionIds: string[], tag: string): Promise<Record<string, string> | null> {
+  if (sectionIds.length === 0) return null;
+
+  try {
+    const url = new URL(getCurrentPageContextPath(), window.location.origin);
+    url.searchParams.set('sections', sectionIds.join(','));
+    url.searchParams.set('_', String(Date.now()));
+
+    const requestPath = `${url.pathname}${url.search}`;
+    DEBUG() && console.log(`[${tag}] Fetching rendered sections from ${requestPath}`);
+
+    const res = await fetch(requestPath, { cache: 'no-store' });
+    if (!res.ok) {
+      console.warn(`[${tag}] Section fetch failed: HTTP ${res.status}`);
+      return null;
+    }
+
+    const data = await res.json().catch(() => null);
+    if (!data || typeof data !== 'object') {
+      console.warn(`[${tag}] Section fetch returned non-JSON or empty response`);
+      return null;
+    }
+
+    const rendered: Record<string, string> = {};
+    for (const sectionId of sectionIds) {
+      const html = data[sectionId];
+      if (typeof html === 'string' && html.trim()) {
+        rendered[sectionId] = html;
+      } else if (html == null) {
+        console.warn(`[${tag}] Section "${sectionId}" rendered as null`);
+      }
+    }
+
+    if (Object.keys(rendered).length === 0) {
+      console.warn(`[${tag}] No rendered sections returned`);
+      return null;
+    }
+
+    DEBUG() && console.log(`[${tag}] Rendered sections fetched: ${Object.keys(rendered).join(', ')}`);
+    return rendered;
+  } catch (e: any) {
+    console.warn(`[${tag}] Section fetch error: ${e?.message}`);
+    return null;
+  }
+}
+
+async function syncCartUiFromStorefront(tag: string) {
+  const cartData = await fetchCartState(tag);
+  if (cartData) {
+    updateCartBadgeCount(cartData.item_count ?? 0);
+    dispatchCartSyncEvents(cartData);
+  }
+
+  const sectionIds = discoverCartSectionIds();
+  if (sectionIds.length === 0) {
+    return cartData;
+  }
+
+  const renderedSections = await fetchRenderedSections(sectionIds, tag);
+  const sectionSelection = selectUsableRenderedSections(renderedSections);
+  if (sectionSelection.usableSections) {
+    applySectionUpdatesPreservingCartUi(sectionSelection.usableSections, `${tag.toLowerCase()}-sync`);
+  }
+
+  return cartData;
+}
+
+async function waitForUsableRenderedSections(opts: {
+  sectionIds: string[];
+  tag: string;
+  expected?: { variantId?: number; priceText?: string; imageUrl?: string | null };
+  requirements?: { requirePrice?: boolean; requireImage?: boolean; requireVariant?: boolean };
+  maxWaitMs: number;
+  delayMs?: number;
+  seedSections?: Array<{ source: string; sections: Record<string, string> | null }>;
+}): Promise<{
+  usableSections: Record<string, string> | null;
+  rejectedSections: Record<string, any> | null;
+  source: string | null;
+}> {
+  const {
+    sectionIds,
+    tag,
+    expected,
+    requirements,
+    maxWaitMs,
+    delayMs = 1200,
+    seedSections = [],
+  } = opts;
+
+  let lastRejectedSections: Record<string, any> | null = null;
+
+  for (const seed of seedSections) {
+    if (!seed.sections) continue;
+    const selection = selectUsableRenderedSections(seed.sections, expected, requirements);
+    if (selection.usableSections) {
+      return {
+        usableSections: selection.usableSections,
+        rejectedSections: selection.rejectedSections,
+        source: seed.source,
+      };
+    }
+    if (selection.rejectedSections) {
+      lastRejectedSections = selection.rejectedSections;
+    }
+  }
+
+  if (sectionIds.length === 0 || maxWaitMs <= 0) {
+    return {
+      usableSections: null,
+      rejectedSections: lastRejectedSections,
+      source: null,
+    };
+  }
+
   const start = Date.now();
   let attempt = 0;
 
   while (Date.now() - start < maxWaitMs) {
-    attempt++;
-    await new Promise(r => setTimeout(r, 1000));
-
-    try {
-      const url = sectionIds.length > 0
-        ? `/cart.js?sections=${sectionIds.join(',')}`
-        : '/cart.js';
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) continue;
-      const data = await res.json();
-
-      const hasZeroPrice = (data.items || []).some(
-        (item: any) => item.final_line_price === 0 || item.price === 0
-      );
-
-      if (!hasZeroPrice) {
-        console.log(`[CART] Price propagated after ${Date.now() - start}ms (${attempt} polls)`);
-        return { sections: data.sections || null, priceOk: true };
-      }
-      console.log(`[CART] Price still $0 (poll ${attempt}, ${Date.now() - start}ms elapsed)`);
-    } catch (e) {
-      console.warn('[CART] Price poll error:', e);
-    }
-  }
-
-  // Timed out — fetch final sections anyway so drawer has SOMETHING
-  console.warn(`[CART] Price poll timed out after ${Date.now() - start}ms — opening drawer with current data`);
-  try {
-    if (sectionIds.length > 0) {
-      const res = await fetch(`/cart.js?sections=${sectionIds.join(',')}`, { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        return { sections: data.sections || null, priceOk: false };
-      }
-    }
-  } catch {}
-  return { sections: null, priceOk: false };
-}
-
-/**
- * Exponential backoff with jitter for /cart/add.js retries.
- * Only retries on "sold out" / "not available" (Shopify propagation delay).
- * Stops immediately on rate limit (429) or other errors.
- *
- * 4 attempts: 0ms → ~570ms → ~1120ms → ~2260ms ≈ 4s worst case
- * vs old linear: 0ms → 1500ms → 3000ms → 4500ms = 9s worst case
- */
-function computeRetryDelayMs(attempt: number): number {
-  const base = Math.min(1800, 350 * (2 ** (attempt - 1)));
-  const jitter = Math.round(Math.random() * 220);
-  return base + jitter;
-}
-
-async function retryCartAdd(
-  payloadStr: string,
-  maxAttempts: number,
-  tag: string
-): Promise<{ cartRes: Response | null; cartErrorText: string; attempts: number }> {
-  let cartRes: Response | null = null;
-  let cartErrorText = '';
-  let attempts = 0;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    attempts = attempt + 1;
     if (attempt > 0) {
-      const delay = computeRetryDelayMs(attempt);
-      console.log(`[${tag}] Retry ${attempt}/${maxAttempts - 1} — waiting ${delay}ms...`);
-      await new Promise(r => setTimeout(r, delay));
+      await new Promise(r => setTimeout(r, delayMs));
     }
-    cartRes = await fetch('/cart/add.js', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: payloadStr,
-    });
-    if (cartRes.ok) break;
-    cartErrorText = await cartRes.text();
-    const lower = cartErrorText.toLowerCase();
-    // Only retry on sold-out/unavailable (variant propagation) — stop on anything else
-    const isSoldOut = lower.includes('sold out') || lower.includes('not available');
-    if (!isSoldOut) break;
-    console.warn(`[${tag}] 422 on attempt ${attempts} of ${maxAttempts}: ${cartErrorText.slice(0, 200)}`);
+    attempt++;
+
+    const fetchedSections = await fetchRenderedSections(sectionIds, tag);
+    const selection = selectUsableRenderedSections(fetchedSections, expected, requirements);
+    if (selection.usableSections) {
+      return {
+        usableSections: selection.usableSections,
+        rejectedSections: selection.rejectedSections,
+        source: `${tag.toLowerCase()}-attempt-${attempt}`,
+      };
+    }
+
+    if (selection.rejectedSections) {
+      lastRejectedSections = selection.rejectedSections;
+      console.warn(`[${tag}] Rendered cart sections still not ready (attempt ${attempt})`);
+    }
   }
 
-  return { cartRes, cartErrorText, attempts };
+  return {
+    usableSections: null,
+    rejectedSections: lastRejectedSections,
+    source: null,
+  };
 }
 
 /**
- * Background polling fallback: if the drawer was opened with $0 (timeout),
- * keep polling every 2s until the price corrects, then dispatch events
- * to let the theme refresh its own UI. We do NOT replace innerHTML here
- * because that would destroy the drawer's open state and scroll lock.
+ * Capture the 3D viewer canvas as a JPEG with white background.
+ * WebGL canvases have transparency â€” compositing onto white prevents black artifacts.
  */
-function scheduleBackgroundSectionRefresh(maxRetries = 5) {
-  let retries = 0;
-  const poll = async () => {
-    retries++;
+function waitForNextFrame() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+async function captureCanvasScreenshot(
+  appLayoutRef: React.RefObject<HTMLDivElement | null>,
+  options?: { resetView?: boolean }
+): Promise<string | undefined> {
+  try {
+    if (options?.resetView) {
+      cameraActions.reset();
+      // Let OrbitControls and the canvas render settle before grabbing the image.
+      await waitForNextFrame();
+      await waitForNextFrame();
+    }
+
+    let canvasEl: HTMLCanvasElement | null = null;
+    const rootNode = appLayoutRef.current?.getRootNode();
+    if (rootNode && rootNode !== document) {
+      canvasEl = (rootNode as ShadowRoot).querySelector('canvas');
+    }
+    if (!canvasEl && appLayoutRef.current) canvasEl = appLayoutRef.current.querySelector('canvas');
+    if (!canvasEl) canvasEl = document.querySelector('canvas');
+    if (!canvasEl) return undefined;
+
+    let result: string;
     try {
-      const res = await fetch('/cart.js', { cache: 'no-store' });
-      if (!res.ok) return;
-      const data = await res.json();
-
-      const hasZeroPrice = (data.items || []).some(
-        (item: any) => item.final_line_price === 0 || item.price === 0
-      );
-
-      // Dispatch events so the theme refreshes its own drawer/cart UI
-      dispatchCartSyncEvents(data);
-      console.log(`[CART] Background refresh ${retries}: dispatched events (zeroPrice=${hasZeroPrice})`);
-
-      if (hasZeroPrice && retries < maxRetries) {
-        setTimeout(poll, 2000);
+      const tmp = document.createElement('canvas');
+      tmp.width = canvasEl.width;
+      tmp.height = canvasEl.height;
+      const ctx2d = tmp.getContext('2d');
+      if (ctx2d) {
+        ctx2d.fillStyle = '#ffffff';
+        ctx2d.fillRect(0, 0, tmp.width, tmp.height);
+        ctx2d.drawImage(canvasEl, 0, 0);
+        result = tmp.toDataURL('image/jpeg', 0.85);
+      } else {
+        result = canvasEl.toDataURL('image/jpeg', 0.85);
       }
     } catch {
-      if (retries < maxRetries) setTimeout(poll, 2000);
+      result = canvasEl.toDataURL('image/jpeg', 0.85);
     }
-  };
-
-  setTimeout(poll, 2000);
+    const kb = Math.round(result.length * 0.75 / 1024);
+    DEBUG() && console.log(`[IMG] Screenshot captured: ~${kb}KB (JPEG 85% white-bg)`);
+    return result;
+  } catch {
+    return undefined;
+  }
 }
 
-/** Discover cart-related section IDs from the current page DOM. */
+/**
+ * Unified add-to-cart with retry: handles both "sold out" (variant not yet
+ * visible) AND "$0 price" (variant visible but price not propagated) in a
+ * single time-budgeted loop. Propagation is NEVER surfaced as an error.
+ *
+ * Flow:
+ *   1. POST /cart/add.js
+ *      - 422 sold-out â†’ backoff, retry (propagation)
+ *      - 429 rate limit or other non-propagation error â†’ hard fail
+ *   2. 200 OK â†’ check response for $0 price on our specific variant
+ *      - $0 â†’ wait 1.5s, poll /cart.js for correct price
+ *      - price OK â†’ return success
+ *
+ * One owner, one timeout budget, one state machine.
+ */
+async function addToCartWithRetry(opts: {
+  cartPayload: Record<string, any>;
+  variantId: number;
+  sectionIds: string[];
+  maxWaitMs: number;
+  tag: string;
+  expectedPriceText?: string;
+  onStep?: (step: string) => void;
+}): Promise<{
+  ok: boolean;
+  cartData: any;
+  priceVerified: boolean;
+  sectionsHtml: Record<string, string> | null;
+  error?: string;
+  hardFail?: boolean;
+  pendingPhase?: 'adding' | 'confirm' | 'price-wait';
+  attempts: number;
+  totalMs: number;
+}> {
+  const { cartPayload, variantId, sectionIds, maxWaitMs, tag, expectedPriceText, onStep } = opts;
+  const start = Date.now();
+  const MAX_ATTEMPTS = 20;
+  const stepPrefix = tag === 'CART' ? 'cart' : 'buy';
+  let attempts = 0;
+  let lastCartData: any = null;
+  let lastSectionsHtml: Record<string, string> | null = null;
+  let phase: 'adding' | 'confirm' | 'price-wait' = 'adding';
+
+  const payloadWithSections = { ...cartPayload };
+  if (sectionIds.length > 0) {
+    payloadWithSections.sections = sectionIds.join(',');
+    payloadWithSections.sections_url = getCurrentPageContextPath();
+  }
+  const payloadStr = JSON.stringify(payloadWithSections);
+
+  while (attempts < MAX_ATTEMPTS && Date.now() - start < maxWaitMs) {
+    attempts++;
+    const elapsed = Math.round((Date.now() - start) / 1000);
+
+    if (phase === 'adding') {
+      if (attempts > 1) {
+        const base = Math.min(3000, 1500 * (2 ** (attempts - 2)));
+        const jitter = Math.round(Math.random() * 400);
+        const delay = base + jitter;
+        DEBUG() && console.log(`[${tag}] Retry ${attempts} (adding) - ${delay}ms delay (${elapsed}s elapsed)`);
+        onStep?.(`${stepPrefix}:syncing`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+
+      try {
+        const res = await fetch(buildShopifyPath('cart/add.js'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payloadStr,
+        });
+
+        if (!res.ok) {
+          const errorText = await res.text().catch(() => '');
+          const compactError = errorText.replace(/\s+/g, ' ').trim();
+
+          if (res.status === 422) {
+            console.warn(`[${tag}] cart/add.js still propagating: HTTP 422 ${compactError.slice(0, 160)}`);
+            onStep?.(`${stepPrefix}:syncing`);
+            continue;
+          }
+
+          return {
+            ok: false,
+            cartData: lastCartData,
+            priceVerified: false,
+            sectionsHtml: lastSectionsHtml,
+            error: compactError || `Unable to update the cart right now (HTTP ${res.status}).`,
+            hardFail: true,
+            pendingPhase: phase,
+            attempts,
+            totalMs: Date.now() - start,
+          };
+        }
+
+        lastCartData = await res.json().catch(() => null);
+        lastSectionsHtml = extractRenderedSections(lastCartData, sectionIds);
+        const bundledUsableSections = selectPendingCartSections(lastSectionsHtml, variantId, expectedPriceText);
+        if (bundledUsableSections) {
+          DEBUG() && console.log(`[${tag}] cart/add.js returned usable rendered sections (${attempts} attempts, ${elapsed}s)`);
+          return {
+            ok: true,
+            cartData: lastCartData,
+            priceVerified: false,
+            sectionsHtml: bundledUsableSections,
+            attempts,
+            totalMs: Date.now() - start,
+          };
+        }
+
+        const confirmedCart = await fetchCartState(`${tag}-CONFIRM`);
+        if (confirmedCart) {
+          lastCartData = confirmedCart;
+          const confirmedItem = findTargetCartItem(confirmedCart, variantId);
+          const confirmedPrice = getCartItemPrice(confirmedItem);
+
+          if (confirmedItem && confirmedPrice > 0) {
+            DEBUG() && console.log(`[${tag}] Cart add confirmed in cart.js, price=${(confirmedPrice / 100).toFixed(2)} (${attempts} attempts, ${elapsed}s)`);
+            return {
+              ok: true,
+              cartData: confirmedCart,
+              priceVerified: true,
+              sectionsHtml: lastSectionsHtml,
+              attempts,
+              totalMs: Date.now() - start,
+            };
+          }
+
+          const confirmedSections = sectionIds.length > 0
+            ? await fetchRenderedSections(sectionIds, `${tag}-SECTIONS-CONFIRM`)
+            : null;
+          const usableConfirmedSections = selectPendingCartSections(confirmedSections, variantId, expectedPriceText);
+          if (usableConfirmedSections) {
+            DEBUG() && console.log(`[${tag}] Rendered sections became usable before cart.js price settled (${attempts} attempts, ${elapsed}s)`);
+            return {
+              ok: true,
+              cartData: confirmedCart,
+              priceVerified: false,
+              sectionsHtml: usableConfirmedSections,
+              attempts,
+              totalMs: Date.now() - start,
+            };
+          }
+
+          phase = confirmedItem ? 'price-wait' : 'confirm';
+          DEBUG() && console.log(`[${tag}] cart/add.js succeeded; waiting on cart.js (${phase})`);
+          onStep?.(`${stepPrefix}:syncing`);
+          continue;
+        }
+
+        const addedItem = findTargetCartItem(lastCartData, variantId);
+        phase = addedItem ? 'price-wait' : 'confirm';
+        DEBUG() && console.log(`[${tag}] cart/add.js succeeded but cart.js was unavailable; continuing in ${phase}`);
+        onStep?.(`${stepPrefix}:syncing`);
+        continue;
+      } catch (e: any) {
+        console.warn(`[${tag}] cart/add.js network error: ${e?.message}`);
+        onStep?.(`${stepPrefix}:syncing`);
+        continue;
+      }
+    }
+
+    const delay = phase === 'confirm' ? 1200 : 1500;
+    await new Promise(r => setTimeout(r, delay));
+
+    const cartData = await fetchCartState(tag);
+    if (!cartData) {
+      DEBUG() && console.log(`[${tag}] cart.js unavailable while waiting in ${phase} (${elapsed}s)`);
+      onStep?.(`${stepPrefix}:syncing`);
+      continue;
+    }
+
+    lastCartData = cartData;
+    const ourItem = findTargetCartItem(cartData, variantId);
+    if (!ourItem) {
+      phase = 'confirm';
+      DEBUG() && console.log(`[${tag}] Variant ${variantId} not visible in cart.js yet (${elapsed}s)`);
+      onStep?.(`${stepPrefix}:syncing`);
+      continue;
+    }
+
+    const price = getCartItemPrice(ourItem);
+    if (price > 0) {
+      DEBUG() && console.log(`[${tag}] Cart confirmed in cart.js after ${elapsed}s (${attempts} attempts)`);
+      return {
+        ok: true,
+        cartData,
+        priceVerified: true,
+        sectionsHtml: lastSectionsHtml,
+        attempts,
+        totalMs: Date.now() - start,
+      };
+    }
+
+    const pendingSections = sectionIds.length > 0
+      ? await fetchRenderedSections(sectionIds, `${tag}-SECTIONS-WAIT`)
+      : null;
+    const usablePendingSections = selectPendingCartSections(pendingSections, variantId, expectedPriceText);
+    if (usablePendingSections) {
+      DEBUG() && console.log(`[${tag}] Rendered sections became usable while cart.js price was still pending (${elapsed}s)`);
+      return {
+        ok: true,
+        cartData,
+        priceVerified: false,
+        sectionsHtml: usablePendingSections,
+        attempts,
+        totalMs: Date.now() - start,
+      };
+    }
+
+    phase = 'price-wait';
+    DEBUG() && console.log(`[${tag}] Variant is in cart, but price is still pending (${elapsed}s)`);
+    onStep?.(`${stepPrefix}:syncing`);
+  }
+
+  return {
+    ok: false,
+    cartData: lastCartData,
+    priceVerified: false,
+    sectionsHtml: lastSectionsHtml,
+    hardFail: false,
+    pendingPhase: phase,
+    attempts,
+    totalMs: Date.now() - start,
+  };
+}
+
+async function continueCartPreparationUntilVerified(opts: {
+  cartPayload: Record<string, any>;
+  variantId: number;
+  sectionIds: string[];
+  pendingPhase: 'adding' | 'confirm' | 'price-wait';
+  tag: string;
+  expectedPriceText?: string;
+  onStep?: (step: string) => void;
+}): Promise<{
+  ok: boolean;
+  cartData: any;
+  priceVerified: boolean;
+  sectionsHtml: Record<string, string> | null;
+  error?: string;
+  hardFail?: boolean;
+  pendingPhase?: 'adding' | 'confirm' | 'price-wait';
+  attempts: number;
+  totalMs: number;
+}> {
+  const { cartPayload, variantId, sectionIds, pendingPhase, tag, expectedPriceText, onStep } = opts;
+  const start = Date.now();
+  const MAX_WAIT_MS = 20000;
+  const MAX_ATTEMPTS = 20;
+  const stepPrefix = tag === 'CART' ? 'cart' : 'buy';
+  let attempts = 0;
+  let phase: 'adding' | 'confirm' | 'price-wait' = pendingPhase;
+  let lastCartData: any = null;
+  let lastSectionsHtml: Record<string, string> | null = null;
+
+  const payloadWithSections = { ...cartPayload };
+  if (sectionIds.length > 0) {
+    payloadWithSections.sections = sectionIds.join(',');
+    payloadWithSections.sections_url = getCurrentPageContextPath();
+  }
+  const payloadStr = JSON.stringify(payloadWithSections);
+
+  while (attempts < MAX_ATTEMPTS && Date.now() - start < MAX_WAIT_MS) {
+    attempts++;
+    const elapsed = Math.round((Date.now() - start) / 1000);
+
+    if (phase === 'adding') {
+      if (attempts > 1) {
+        const delay = 1200 + Math.round(Math.random() * 300);
+        await new Promise(r => setTimeout(r, delay));
+      }
+
+      try {
+        const res = await fetch(buildShopifyPath('cart/add.js'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payloadStr,
+        });
+
+        if (!res.ok) {
+          const errorText = await res.text().catch(() => '');
+          const compactError = errorText.replace(/\s+/g, ' ').trim();
+
+          if (res.status === 422) {
+            console.warn(`[${tag}] Pending add still propagating: HTTP 422 ${compactError.slice(0, 160)}`);
+            onStep?.(`${stepPrefix}:syncing`);
+            continue;
+          }
+
+          return {
+            ok: false,
+            cartData: lastCartData,
+            priceVerified: false,
+            sectionsHtml: lastSectionsHtml,
+            error: compactError || `Unable to update the cart right now (HTTP ${res.status}).`,
+            hardFail: true,
+            pendingPhase: phase,
+            attempts,
+            totalMs: Date.now() - start,
+          };
+        }
+
+        lastCartData = await res.json().catch(() => null);
+        lastSectionsHtml = extractRenderedSections(lastCartData, sectionIds);
+        const bundledUsableSections = selectPendingCartSections(lastSectionsHtml, variantId, expectedPriceText);
+        if (bundledUsableSections) {
+          DEBUG() && console.log(`[${tag}] Pending add returned usable rendered sections after ${elapsed}s`);
+          return {
+            ok: true,
+            cartData: lastCartData,
+            priceVerified: false,
+            sectionsHtml: bundledUsableSections,
+            attempts,
+            totalMs: Date.now() - start,
+          };
+        }
+
+        const confirmedCart = await fetchCartState(`${tag}-PENDING-CONFIRM`);
+        if (confirmedCart) {
+          lastCartData = confirmedCart;
+          const confirmedItem = findTargetCartItem(confirmedCart, variantId);
+          const confirmedPrice = getCartItemPrice(confirmedItem);
+
+          if (confirmedItem && confirmedPrice > 0) {
+            DEBUG() && console.log(`[${tag}] Pending add confirmed in cart.js after ${elapsed}s`);
+            return {
+              ok: true,
+              cartData: confirmedCart,
+              priceVerified: true,
+              sectionsHtml: lastSectionsHtml,
+              attempts,
+              totalMs: Date.now() - start,
+            };
+          }
+
+          const confirmedSections = sectionIds.length > 0
+            ? await fetchRenderedSections(sectionIds, `${tag}-PENDING-SECTIONS`)
+            : null;
+          const usableConfirmedSections = selectPendingCartSections(confirmedSections, variantId, expectedPriceText);
+          if (usableConfirmedSections) {
+            DEBUG() && console.log(`[${tag}] Pending add got usable rendered sections before cart.js price settled (${elapsed}s)`);
+            return {
+              ok: true,
+              cartData: confirmedCart,
+              priceVerified: false,
+              sectionsHtml: usableConfirmedSections,
+              attempts,
+              totalMs: Date.now() - start,
+            };
+          }
+
+          phase = confirmedItem ? 'price-wait' : 'confirm';
+          onStep?.(`${stepPrefix}:syncing`);
+          continue;
+        }
+
+        const addedItem = findTargetCartItem(lastCartData, variantId);
+        phase = addedItem ? 'price-wait' : 'confirm';
+        onStep?.(`${stepPrefix}:syncing`);
+        continue;
+      } catch (e: any) {
+        console.warn(`[${tag}] Pending add error: ${e?.message}`);
+        onStep?.(`${stepPrefix}:syncing`);
+        continue;
+      }
+    }
+
+    await new Promise(r => setTimeout(r, phase === 'confirm' ? 1200 : 1500));
+
+    const cartData = await fetchCartState(tag);
+    if (!cartData) {
+      onStep?.(`${stepPrefix}:syncing`);
+      continue;
+    }
+
+    lastCartData = cartData;
+    const ourItem = findTargetCartItem(cartData, variantId);
+    if (!ourItem) {
+      phase = 'confirm';
+      DEBUG() && console.log(`[${tag}] Pending poll still cannot find variant ${variantId} in cart.js after ${elapsed}s`);
+      onStep?.(`${stepPrefix}:syncing`);
+      continue;
+    }
+
+    const price = getCartItemPrice(ourItem);
+    if (price > 0) {
+      DEBUG() && console.log(`[${tag}] Pending poll verified price after ${elapsed}s`);
+      return {
+        ok: true,
+        cartData,
+        priceVerified: true,
+        sectionsHtml: lastSectionsHtml,
+        attempts,
+        totalMs: Date.now() - start,
+      };
+    }
+
+    const pendingSections = sectionIds.length > 0
+      ? await fetchRenderedSections(sectionIds, `${tag}-PENDING-SECTIONS-WAIT`)
+      : null;
+    const usablePendingSections = selectPendingCartSections(pendingSections, variantId, expectedPriceText);
+    if (usablePendingSections) {
+      DEBUG() && console.log(`[${tag}] Pending poll got usable rendered sections while cart.js price was still pending (${elapsed}s)`);
+      return {
+        ok: true,
+        cartData,
+        priceVerified: false,
+        sectionsHtml: usablePendingSections,
+        attempts,
+        totalMs: Date.now() - start,
+      };
+    }
+
+    phase = 'price-wait';
+    DEBUG() && console.log(`[${tag}] Pending poll found variant but price is still pending (${elapsed}s)`);
+    onStep?.(`${stepPrefix}:syncing`);
+  }
+
+  return {
+    ok: false,
+    cartData: lastCartData,
+    priceVerified: false,
+    sectionsHtml: lastSectionsHtml,
+    hardFail: false,
+    pendingPhase: phase,
+    attempts,
+    totalMs: Date.now() - start,
+  };
+}
 function discoverCartSectionIds(): string[] {
   const ids = new Set<string>();
 
@@ -343,7 +1508,7 @@ function discoverCartSectionIds(): string[] {
     '[id^="shopify-section-"][id*="cart"], cart-drawer, cart-notification'
   );
   for (const el of candidates) {
-    // Extract section ID: "shopify-section-cart-drawer" → "cart-drawer"
+    // Extract section ID: "shopify-section-cart-drawer" â†’ "cart-drawer"
     const fullId = el.id || '';
     const sectionId = fullId.replace('shopify-section-', '') || el.getAttribute('data-section');
     if (sectionId) ids.add(sectionId);
@@ -362,7 +1527,7 @@ function discoverCartSectionIds(): string[] {
     ids.add('cart-icon-bubble');
   }
 
-  console.log('[CART] Discovered cart section IDs:', [...ids]);
+  DEBUG() && console.log('[CART] Discovered cart section IDs:', [...ids]);
   return [...ids];
 }
 
@@ -384,11 +1549,12 @@ function applySectionUpdates(sections: Record<string, string>) {
         || doc.querySelector(`[data-section="${sectionId}"]`)
         || doc.body;
       if (newContent) {
+        removeConfigurationOptionRows(newContent);
         target.innerHTML = newContent.innerHTML;
-        console.log('[CART] Updated section DOM:', sectionId);
+        DEBUG() && console.log('[CART] Updated section DOM:', sectionId);
       }
     } else {
-      console.log('[CART] Section target not found for:', sectionId);
+      DEBUG() && console.log('[CART] Section target not found for:', sectionId);
     }
   }
 }
@@ -408,7 +1574,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<'cart' | 'buy' | null>(null);
   const [submittingStep, setSubmittingStep] = useState<string>('');
-  // Synchronous guard against double-taps — React state can be stale across rapid clicks
+  // Synchronous guard against double-taps â€” React state can be stale across rapid clicks
   const submittingRef = useRef(false);
 
   const arViewerRef = useRef<any>(null);
@@ -416,8 +1582,15 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const qrUrlRef = useRef<HTMLDivElement>(null);
   const appLayoutRef = useRef<HTMLDivElement>(null);
 
+  const resetSubmittingUi = () => {
+    submittingRef.current = false;
+    setIsSubmitting(false);
+    setSubmittingAction(null);
+    setSubmittingStep('');
+  };
+
   useEffect(() => {
-    console.log('Configurator app boot props:', {
+    DEBUG() && console.log('Configurator app boot props:', {
       productId: productId || null,
       variantId: variantId || null,
       path: window.location.pathname,
@@ -426,7 +1599,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
     const hash = window.location.hash;
     if (hash.startsWith('#ar=')) {
-      // AR config takes priority — don't restore from cart
+      // AR config takes priority â€” don't restore from cart
       const restored = applyConfigState(hash.slice(4));
       setConfig(restored as any);
       setShowMobilePrompt(true);
@@ -448,7 +1621,24 @@ export default function App({ productId, variantId }: AppProps = {}) {
     return () => document.removeEventListener('keydown', handler);
   }, []);
 
-  const [mobilePreviewSize, setMobilePreviewSize] = useState(40);
+  useEffect(() => {
+    const handlePageShow = (event: PageTransitionEvent) => {
+      const navigationEntry = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+      const isBackForward = event.persisted || navigationEntry?.type === 'back_forward';
+      if (!isBackForward) return;
+
+      DEBUG() && console.log('[CART] pageshow back/forward restore â€” resyncing UI');
+      resetSubmittingUi();
+      restoreConfigIfNeeded();
+      releasePageScrollLockIfCartClosed('pageshow');
+      void syncCartUiFromStorefront('PAGESHOW');
+    };
+
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, []);
+
+  const [mobilePreviewSize, setMobilePreviewSize] = useState(35);
   const [dragPreviewSize, setDragPreviewSize] = useState<number | null>(null);
   const isDraggingRef = useRef(false);
   const dragPointerOffsetRef = useRef(0);
@@ -585,17 +1775,13 @@ export default function App({ productId, variantId }: AppProps = {}) {
             </button>
             {config.holes > 0 && (
               <button
-                className="vp-btn"
+                className={`viewport-primary-btn${config.moveHolesMode ? ' is-active' : ''}`}
                 title={config.moveHolesMode ? 'Done Moving Holes' : 'Move Holes'}
+                disabled={isSubmitting}
+                aria-disabled={isSubmitting}
                 style={{
                   width: 'auto',
-                  padding: '0 12px',
                   gap: '6px',
-                  fontWeight: 600,
-                  fontSize: '12px',
-                  backgroundColor: config.moveHolesMode ? '#c9873b' : undefined,
-                  color: config.moveHolesMode ? '#fff' : undefined,
-                  borderColor: config.moveHolesMode ? '#c9873b' : undefined,
                   display: 'flex',
                   alignItems: 'center',
                   whiteSpace: 'nowrap',
@@ -606,12 +1792,12 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 <span>{config.moveHolesMode ? 'Done Moving' : 'Move Holes'}</span>
               </button>
             )}
-            <button className="ar-btn desktop-ar viewport-action-btn" onClick={() => launchAR()}>View in AR</button>
+            <button className="viewport-primary-btn desktop-ar viewport-action-btn" onClick={() => launchAR()}>View in AR</button>
           </div>
 
           <div className="mobile-only-controls" style={{ position: 'absolute', bottom: 14, left: 14, display: 'flex', gap: 8, zIndex: 5 }}>
             <button
-              className="ar-btn-mobile"
+              className="viewport-primary-btn ar-btn-mobile"
               style={{ position: 'relative', bottom: 'auto', left: 'auto', transform: 'none', margin: 0 }}
               onClick={() => launchAR(true)}
               title="View in AR"
@@ -663,7 +1849,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
             )}
           </div>
 
-          <div className="viewport-badge">Drag to orbit · Scroll to zoom · Right-drag to pan</div>
+          <div className="viewport-badge">Drag to orbit Â· Scroll to zoom Â· Right-drag to pan</div>
         </div>
 
         {dragPreviewSize !== null && (
@@ -722,25 +1908,15 @@ export default function App({ productId, variantId }: AppProps = {}) {
             submittingRef.current = true;
             let shouldResetSubmitting = true;
             try {
+              if (config.moveHolesMode) {
+                setConfig({ moveHolesMode: false });
+              }
               setIsSubmitting(true);
               setSubmittingAction('cart');
               setSubmittingStep('cart:building');
               const t0 = performance.now();
 
               const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
-
-              // Capture screenshot (don't send with main request — upload in background later)
-              let screenshotBase64: string | undefined;
-              try {
-                let canvasEl: HTMLCanvasElement | null = null;
-                const rootNode = appLayoutRef.current?.getRootNode();
-                if (rootNode && rootNode !== document) {
-                  canvasEl = (rootNode as ShadowRoot).querySelector('canvas');
-                }
-                if (!canvasEl && appLayoutRef.current) canvasEl = appLayoutRef.current.querySelector('canvas');
-                if (!canvasEl) canvasEl = document.querySelector('canvas');
-                if (canvasEl) screenshotBase64 = canvasEl.toDataURL('image/png');
-              } catch { /* ignore */ }
 
               const payload = {
                 w: config.w, l: config.l, sk: config.sk,
@@ -758,52 +1934,44 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 notes: config.notes,
                 shopifyProductId: resolvedShopifyIds.productId,
                 shopifyVariantId: resolvedShopifyIds.variantId,
-                // NO image here — uploaded in background after cart is updated
+                // NO image here â€” uploaded in background after cart is updated
               };
 
               // Diagnostic: log key config fields to verify different configs produce different payloads
-              console.log('[CART] ① Payload fingerprint:', JSON.stringify({
+              DEBUG() && console.log('[CART] â‘  Payload fingerprint:', JSON.stringify({
                 pc: payload.pc, pcCol: payload.pcCol, mat: payload.mat,
                 holes: payload.holes,
                 cA: payload.collarA ? { shape: payload.collarA.shape, dia: payload.collarA.dia, rw: payload.collarA.rectWidth, rl: payload.collarA.rectLength, o1: payload.collarA.offset1, o2: payload.collarA.offset2, o3: payload.collarA.offset3, o4: payload.collarA.offset4 } : null,
               }));
 
-              // Step 1: Create variant (fast — no image in payload)
-              setSubmittingStep('cart:building');
-              const tApi = performance.now();
-              const apiController = new AbortController();
-              const apiTimeout = setTimeout(() => apiController.abort(), 30000);
-              let res: Response;
-              try {
-                res = await fetch(`${apiBase}/api/add-to-cart`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(payload),
-                  signal: apiController.signal,
-                });
-              } catch (fetchErr: any) {
-                if (fetchErr.name === 'AbortError') {
-                  throw new Error('Request timed out. Please check your connection and try again.');
-                }
-                throw new Error('Network error. Please check your connection and try again.');
-              } finally {
-                clearTimeout(apiTimeout);
+              // Warm up the API connection if the initial pricing load failed.
+              // A failed pricing fetch on page load can leave the browser's HTTP/2
+              // connection pool to Vercel in a broken state, causing instant
+              // “Failed to fetch” errors on subsequent requests to the same origin.
+              if (!isApiReachable()) {
+                DEBUG() && console.log('[CART] API not reached during page load — warming up connection');
+                await loadPricingFromAPI(apiBase);
               }
 
-              const data = await res.json().catch(() => null);
-              const apiMs = Math.round(performance.now() - tApi);
+              // Step 1: Create variant (fast â€” no image in payload)
+              const { res, data, attempts: apiAttempts, totalMs: apiMs } = await postAddToCartApi({
+                apiBase,
+                payload,
+                tag: 'CART',
+              });
               if (data?._timing) {
-                const { authPricingMs, optionNameMs, variantMs, totalMs } = data._timing;
-                console.log(`[CART] ② API: ${apiMs}ms total | server breakdown → auth+pricing: ${authPricingMs}ms | optionName: ${optionNameMs}ms | variant: ${variantMs}ms | server total: ${totalMs}ms`);
+                const { authPricingMs, optionNameMs, variantMs, propagationMs, totalMs } = data._timing;
+                DEBUG() && console.log(`[CART] â‘¡ API: ${apiMs}ms total | server breakdown â†’ auth+pricing: ${authPricingMs}ms | optionName: ${optionNameMs}ms | variant: ${variantMs}ms | propagation: ${propagationMs ?? 0}ms | server total: ${totalMs}ms`);
               } else {
-                console.log(`[CART] ② API: ${apiMs}ms`);
+                DEBUG() && console.log(`[CART] â‘¡ API: ${apiMs}ms`);
               }
+              DEBUG() && apiAttempts > 1 && console.log(`[CART] API recovered after ${apiAttempts} attempts`);
               if (!res.ok) {
                 console.error('Add-to-cart API error:', res.status, data);
                 throw new Error(data?.error || `HTTP error! status: ${res.status}`);
               }
 
-              console.log(`[CART] ②b Server result: variantId=${data.variantId}, reused=${data.variantReused}, price=${data.price}`);
+              DEBUG() && console.log(`[CART] â‘¡b Server result: variantId=${data.variantId}, reused=${data.variantReused}, propagated=${data.propagated}, price=${data.price}`);
 
               // Step 2: Add to Shopify cart IMMEDIATELY (no pre-wait)
               const cartProperties: Record<string, string> = {};
@@ -812,6 +1980,10 @@ export default function App({ productId, variantId }: AppProps = {}) {
               }
 
               const drawerSectionIds = discoverCartSectionIds();
+              const debugVariantId = Number(data.variantId);
+              const expectedPriceText = String(data.price || '');
+              let expectedImageUrl: string | null = null;
+              let imageUploadPromise: Promise<string | null> = Promise.resolve(null);
               const cartBody: Record<string, any> = {
                 items: [{
                   id: Number(data.variantId),
@@ -822,93 +1994,336 @@ export default function App({ productId, variantId }: AppProps = {}) {
               if (drawerSectionIds.length > 0) {
                 cartBody.sections = drawerSectionIds.join(',');
               }
+              emitCartDebug('api-result', {
+                variantId: debugVariantId,
+                propagated: data.propagated,
+                variantReused: data.variantReused,
+                serverPrice: expectedPriceText,
+                requestAttempts: apiAttempts,
+                clientMs: apiMs,
+                timing: data._timing || null,
+                sectionIds: drawerSectionIds,
+                sectionMounts: collectSectionMountSnapshot(drawerSectionIds),
+                dom: collectCartDomSnapshot(),
+              });
 
               setSubmittingStep('cart:adding');
               const t1 = performance.now();
-              const cartPayloadStr = JSON.stringify(cartBody);
 
-              // Retry with exponential backoff + jitter — only for "sold out"
-              // (Shopify storefront propagation delay, NOT actual stock issues).
-              // 4 attempts: 0ms → ~570ms → ~1120ms → ~2260ms ≈ 4s worst case
-              // (down from 0 → 1.5s → 3s → 4.5s = 9s before)
-              const { cartRes, cartErrorText, attempts: cartAttempts } = await retryCartAdd(cartPayloadStr, 4, 'CART');
+              // Unified retry: cart add + price verification in one loop, one timeout budget
+              const cartMaxWaitMs = getForegroundWaitBudgetMs('CART');
+              const retryResult = await addToCartWithRetry({
+                cartPayload: cartBody,
+                variantId: Number(data.variantId),
+                sectionIds: drawerSectionIds,
+                maxWaitMs: cartMaxWaitMs,
+                tag: 'CART',
+                expectedPriceText,
+                onStep: setSubmittingStep,
+              });
 
-              if (!cartRes || !cartRes.ok) {
-                let msg = 'Something went wrong — please try again in a moment.';
-                if (cartRes?.status === 429) {
-                  msg = 'Too many requests — please wait a moment and try again.';
-                }
-                // NEVER show "sold out" to the user — it's a propagation issue, not stock
-                console.error('[CART] All retries failed:', cartRes?.status, cartErrorText.slice(0, 200));
-                throw new Error(msg);
-              }
-              const cartData = await cartRes.json().catch(() => null);
               const cartAddMs = Math.round(performance.now() - t1);
-              console.log(`[CART] ③ /cart/add.js: ${cartAddMs}ms (${cartAttempts} attempt${cartAttempts > 1 ? 's' : ''})`);
+              DEBUG() && console.log(`[CART] â‘¢ Cart retry: ${cartAddMs}ms (${retryResult.attempts} attempt${retryResult.attempts > 1 ? 's' : ''}, ok=${retryResult.ok})`);
 
-              // Step 3: Open drawer IMMEDIATELY — don't block on price propagation.
-              // If price is $0 (new variant, storefront hasn't caught up), sync in background.
-              const cartItemPrice = cartData?.items?.[0]?.price ?? cartData?.items?.[0]?.final_line_price;
-              const priceWasZero = !data.variantReused && (cartItemPrice === 0 || cartItemPrice === '0');
+              let finalRetryResult = retryResult;
+              if (!finalRetryResult.ok) {
+                if (finalRetryResult.hardFail) {
+                  throw new Error(retryResult.error || 'Something went wrong â€” please try again in a moment.');
+                }
+                // Propagation timeout â€” not a hard error, but price isn't verified
+                finalRetryResult = await continueCartPreparationUntilVerified({
+                  cartPayload: cartBody,
+                  variantId: Number(data.variantId),
+                  sectionIds: drawerSectionIds,
+                  pendingPhase: finalRetryResult.pendingPhase || 'adding',
+                  tag: 'CART',
+                  expectedPriceText,
+                  onStep: setSubmittingStep,
+                });
+              }
+              if (!finalRetryResult.ok) {
+                throw new Error('We could not confirm the cart update yet. Please refresh the cart and try again.');
+              }
 
-              console.log(`[CART] ✓ TOTAL: ${Math.round(performance.now() - t0)}ms${priceWasZero ? ' (price sync in background)' : ''}`);
+              let finalCartData = finalRetryResult.cartData;
+              emitCartDebug('cart-json-before-open', {
+                variantId: debugVariantId,
+                retry: {
+                  ok: finalRetryResult.ok,
+                  attempts: finalRetryResult.attempts,
+                  totalMs: finalRetryResult.totalMs,
+                  priceVerified: finalRetryResult.priceVerified,
+                  pendingPhase: finalRetryResult.pendingPhase || null,
+                },
+                targetItem: summarizeCartItemForDebug(findTargetCartItem(finalCartData, debugVariantId)),
+                bundledSections: summarizeSectionsForDebug(finalRetryResult.sectionsHtml, {
+                  variantId: debugVariantId,
+                  priceText: expectedPriceText,
+                }),
+                sectionMounts: collectSectionMountSnapshot(drawerSectionIds),
+                dom: collectCartDomSnapshot(),
+              });
 
-              // Apply section updates BEFORE opening the drawer (while it's hidden).
-              if (cartData?.sections) applySectionUpdates(cartData.sections);
+              // Check if image upload finished during the retry loop.
+              // Give it a short extra window (up to 1s) if it's nearly done.
+              const imageUrl: string | null = null;
+              let seededImageSections: Record<string, string> | null = null;
+              DEBUG() && console.log('[IMG] Image capture is deferred until after the drawer opens');
+              if (imageUrl && drawerSectionIds.length > 0) {
+                DEBUG() && console.log('[IMG] Image ready before drawer open â€” fetching fresh sections with image...');
+                try {
+                  const imageSections = await fetchRenderedSections(drawerSectionIds, 'IMG');
+                  if (imageSections) {
+                    seededImageSections = imageSections;
+                    if (imageSections) {
+                      DEBUG() && console.log('[IMG] Fresh sections applied before drawer open');
+                      DEBUG() && console.log('[IMG] Fresh sections applied â€” image should appear in drawer');
+                    }
+                  }
+                } catch { /* ignore */ }
+              } else if (!imageUrl) {
+                DEBUG() && console.log('[IMG] Upload still in progress â€” drawer will open without image; will refresh after');
+              }
 
-              const addedQty = data.quantity ?? 1;
-              const cartItemCount = cartData?.item_count ?? 0;
-              updateCartBadgeCount(cartItemCount > 0 ? cartItemCount : addedQty);
+              DEBUG() && console.log(`[CART] âœ“ TOTAL: ${Math.round(performance.now() - t0)}ms`);
+
+              // Apply section updates BEFORE opening the drawer (still closed â€” safe)
+              const renderExpectation = {
+                variantId: debugVariantId,
+                priceText: expectedPriceText,
+                imageUrl: expectedImageUrl,
+              };
+              const verifiedSections = await fetchRenderedSections(drawerSectionIds, 'CART');
+              const sectionReadiness = await waitForUsableRenderedSections({
+                sectionIds: drawerSectionIds,
+                tag: 'CART-SECTIONS',
+                expected: renderExpectation,
+                requirements: { requireVariant: true },
+                maxWaitMs: drawerSectionIds.length > 0 ? 3500 : 0,
+                seedSections: [
+                  { source: 'verified-initial', sections: verifiedSections },
+                  { source: 'bundled-initial', sections: finalRetryResult.sectionsHtml },
+                  { source: 'image-initial', sections: seededImageSections },
+                ],
+              });
+
+              if (sectionReadiness.usableSections) {
+                finalCartData = { ...finalCartData, sections: sectionReadiness.usableSections };
+                applySectionUpdates(sectionReadiness.usableSections);
+              }
+
+              if (sectionReadiness.rejectedSections) {
+                emitCartDebug('skip-rendered-sections', {
+                  reason: 'pre-open',
+                  variantId: debugVariantId,
+                  rejectedVerifiedSections: sectionReadiness.rejectedSections,
+                  rejectedBundledSections: null,
+                  dom: collectCartDomSnapshot(),
+                });
+              }
+              emitCartDebug('pre-open-sections', {
+                variantId: debugVariantId,
+                targetItem: summarizeCartItemForDebug(findTargetCartItem(finalCartData, debugVariantId)),
+                verifiedSections: summarizeSectionsForDebug(verifiedSections, renderExpectation),
+                bundledSections: summarizeSectionsForDebug(finalRetryResult.sectionsHtml, renderExpectation),
+                imageSections: summarizeSectionsForDebug(seededImageSections, renderExpectation),
+                usableSectionSource: sectionReadiness.source,
+                sectionMounts: collectSectionMountSnapshot(drawerSectionIds),
+                dom: collectCartDomSnapshot(),
+              });
+
+              if (!(typeof finalCartData?.item_count === 'number' && finalCartData.item_count > 0)) {
+                const confirmedCartData = await fetchCartState('CART-BADGE');
+                if (confirmedCartData) {
+                  finalCartData = confirmedCartData;
+                }
+              }
+
+              const cartItemCount = finalCartData?.item_count ?? 0;
+              if (cartItemCount > 0) {
+                updateCartBadgeCount(cartItemCount);
+              }
+
+              emitCartDebug('cart-latency-breakdown', {
+                variantId: debugVariantId,
+                totalMs: Math.round(performance.now() - t0),
+                apiMs,
+                cartRetryMs: cartAddMs,
+                retryAttempts: finalRetryResult.attempts,
+                priceVerified: finalRetryResult.priceVerified,
+                usableSectionSource: sectionReadiness.source,
+                cartItemCount,
+              });
 
               // Save config so navigating away and coming back restores it
               saveConfigForRestore();
 
-              // Open the cart drawer/notification
+              if (drawerSectionIds.length > 0 && !sectionReadiness.usableSections) {
+                // Sections still show $0 â€” DON'T redirect to /cart (it would also show $0).
+                // Instead, keep the spinner and poll a bit longer for correct sections.
+                console.warn('[CART] Sections not ready after initial wait â€” extended retry...');
+                const extendedSections = await waitForUsableRenderedSections({
+                  sectionIds: drawerSectionIds,
+                  tag: 'CART-EXTENDED',
+                  expected: renderExpectation,
+                  requirements: { requireVariant: true },
+                  maxWaitMs: 6000,
+                  delayMs: 2000,
+                  seedSections: [],
+                });
+
+                if (extendedSections.usableSections) {
+                  DEBUG() && console.log('[CART] Extended retry got usable sections');
+                  applySectionUpdates(extendedSections.usableSections);
+                  finalCartData = { ...finalCartData, sections: extendedSections.usableSections };
+                } else {
+                  // Last resort: open drawer anyway â€” the theme will render whatever it has,
+                  // and we dispatch sync events so it can self-correct
+                  console.warn('[CART] Extended retry exhausted â€” opening drawer with best-effort sections');
+                  emitCartDebug('drawer-open-skipped', {
+                    variantId: debugVariantId,
+                    reason: 'rendered-sections-not-ready-extended',
+                    targetItem: summarizeCartItemForDebug(findTargetCartItem(finalCartData, debugVariantId)),
+                    dom: collectCartDomSnapshot(),
+                  });
+                }
+              }
+
+              // Open the cart drawer/notification â€” price is correct by now
               const drawerOpened = tryOpenCartUi();
 
               if (drawerOpened) {
-                console.log('[CART] Cart drawer opened');
-                dispatchCartSyncEvents(cartData);
+                DEBUG() && console.log('[CART] Cart drawer opened');
+                dispatchCartSyncEvents(finalCartData);
               } else {
-                dispatchCartSyncEvents(null);
-                shouldResetSubmitting = false;
-                window.location.assign('/cart');
+                dispatchCartSyncEvents(finalCartData);
+                window.location.assign(buildShopifyPath('cart'));
+              }
+              emitCartDebug('drawer-open', {
+                variantId: debugVariantId,
+                drawerOpened,
+                redirectedToCartPage: !drawerOpened,
+                targetItem: summarizeCartItemForDebug(findTargetCartItem(finalCartData, debugVariantId)),
+                sectionMounts: collectSectionMountSnapshot(drawerSectionIds),
+                dom: collectCartDomSnapshot(),
+              });
+
+              if (drawerOpened && data.variantId && !data.variantReused) {
+                imageUploadPromise = (async () => {
+                  const captureStartedAt = performance.now();
+                  const screenshotBase64 = await captureCanvasScreenshot(appLayoutRef);
+                  const captureMs = Math.round(performance.now() - captureStartedAt);
+
+                  if (!screenshotBase64) {
+                    DEBUG() && console.warn('[IMG] Screenshot unavailable after drawer open; skipping upload');
+                    emitCartDebug('image-capture-complete', {
+                      variantId: debugVariantId,
+                      captureMs,
+                      captured: false,
+                      dom: collectCartDomSnapshot(),
+                    });
+                    return null;
+                  }
+
+                  emitCartDebug('image-capture-complete', {
+                    variantId: debugVariantId,
+                    captureMs,
+                    captured: true,
+                    dom: collectCartDomSnapshot(),
+                  });
+
+                  const uploadStartedAt = performance.now();
+                  try {
+                    const imgRes = await fetch(`${apiBase}/api/variant-image`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        variantId: data.variantId,
+                        productId: resolvedShopifyIds.productId,
+                        image: screenshotBase64,
+                      }),
+                    });
+                    const uploadMs = Math.round(performance.now() - uploadStartedAt);
+                    if (!imgRes.ok) {
+                      console.warn(`[IMG] Upload failed after drawer open: HTTP ${imgRes.status} (${uploadMs}ms)`);
+                      return null;
+                    }
+                    const imgData = await imgRes.json().catch(() => null);
+                    expectedImageUrl = imgData?.imageUrl ?? null;
+                    emitCartDebug('image-upload-complete', {
+                      variantId: debugVariantId,
+                      imageUrl: expectedImageUrl,
+                      captureMs,
+                      uploadMs,
+                      dom: collectCartDomSnapshot(),
+                    });
+                    return expectedImageUrl;
+                  } catch (e: any) {
+                    console.warn('[IMG] Upload error after drawer open:', e?.message);
+                    return null;
+                  }
+                })();
               }
 
-              // If price was $0, sync in background (non-blocking — drawer is already open)
-              if (priceWasZero) {
-                const isMobile = window.innerWidth <= 767 || /Mobi|Android|iPhone/i.test(navigator.userAgent);
-                const pollTimeout = isMobile ? 8000 : 5000;
-                console.warn(`[CART] Price $0 — background sync (timeout=${pollTimeout}ms, mobile=${isMobile})`);
-                waitForCartPriceUpdate(drawerSectionIds, pollTimeout)
-                  .then((pollResult) => {
-                    console.log(`[CART] Background price sync: ${pollResult.priceOk ? 'ok' : 'timeout'}`);
-                    dispatchCartSyncEvents(null);
-                    if (!pollResult.priceOk) scheduleBackgroundSectionRefresh();
-                  })
-                  .catch(() => scheduleBackgroundSectionRefresh());
-              }
+              // 3d: If image upload was still pending when the drawer opened,
+              // dispatch refresh events once it completes so the theme can update.
+              if (!imageUrl && drawerOpened) {
+                imageUploadPromise.then(async (url) => {
+                  if (!url) return;
+                  DEBUG() && console.log('[IMG] Upload finished after drawer opened â€” checking whether drawer needs image catch-up');
+                  expectedImageUrl = url;
+                  const latestCartData = await fetchCartState('IMG');
+                  if (latestCartData) {
+                    const latestItem = findTargetCartItem(latestCartData, debugVariantId);
+                    if (getCartItemPrice(latestItem) > 0) {
+                      finalCartData = latestCartData;
+                    } else {
+                      emitCartDebug('skip-cart-json-downgrade', {
+                        variantId: debugVariantId,
+                        latestItem: summarizeCartItemForDebug(latestItem),
+                        dom: collectCartDomSnapshot(),
+                      });
+                    }
+                  }
 
-              // Step 5: Upload image in BACKGROUND — fire-and-forget.
-              // We do NOT refresh drawer sections after upload because replacing
-              // innerHTML would destroy the drawer's open state and scroll lock.
-              // The image will appear on the next cart view or page load.
-              if (screenshotBase64 && data.variantId && !data.variantReused) {
-                console.log('[CART] Image upload started in background');
-                fetch(`${apiBase}/api/variant-image`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    variantId: data.variantId,
-                    productId: resolvedShopifyIds.productId,
-                    image: screenshotBase64,
-                  }),
-                }).then(async (uploadRes) => {
-                  if (!uploadRes.ok) return;
-                  console.log('[CART] Image uploaded successfully');
-                  // Dispatch events so theme can pick up the change if it wants to
-                  dispatchCartSyncEvents(null);
-                }).catch(() => { /* ignore */ });
+                  const drawerHasExpectedImage = cartUiContainsExpectedImage(expectedImageUrl);
+                  emitCartDebug('post-image-upload-status', {
+                    variantId: debugVariantId,
+                    imageUrl: expectedImageUrl,
+                    drawerHasExpectedImage,
+                    targetItem: summarizeCartItemForDebug(findTargetCartItem(finalCartData, debugVariantId)),
+                    dom: collectCartDomSnapshot(),
+                  });
+
+                  if (!drawerHasExpectedImage && drawerSectionIds.length > 0) {
+                    const fetchedImageSections = await fetchRenderedSections(drawerSectionIds, 'IMG');
+                    const imageSectionSelection = selectUsableRenderedSections(
+                      fetchedImageSections,
+                      {
+                        variantId: debugVariantId,
+                        priceText: expectedPriceText,
+                        imageUrl: expectedImageUrl,
+                      },
+                      { requireVariant: true, requireImage: true },
+                    );
+
+                    if (imageSectionSelection.usableSections) {
+                      finalCartData = { ...finalCartData, sections: imageSectionSelection.usableSections };
+                      applySectionUpdatesPreservingCartUi(imageSectionSelection.usableSections, 'post-image-refresh');
+                    } else if (imageSectionSelection.rejectedSections) {
+                      emitCartDebug('skip-rendered-sections', {
+                        reason: 'post-image-upload',
+                        variantId: debugVariantId,
+                        rejectedVerifiedSections: imageSectionSelection.rejectedSections,
+                        rejectedBundledSections: null,
+                        dom: collectCartDomSnapshot(),
+                      });
+                    }
+                  }
+
+                  dispatchCartSyncEvents(finalCartData);
+                  window.setTimeout(() => releasePageScrollLockIfCartClosed('post-image-refresh'), 150);
+                });
               }
               return;
 
@@ -918,7 +2333,8 @@ export default function App({ productId, variantId }: AppProps = {}) {
               document.body.style.overflow = '';
               document.documentElement.style.overflow = '';
               document.body.classList.remove('overflow-hidden', 'no-scroll');
-              const msg = err?.message || 'Unknown error';
+              document.documentElement.classList.remove('overflow-hidden', 'no-scroll');
+              const msg = formatCheckoutErrorMessage(err?.message || 'Unknown error', 'cart');
               alert(msg.length > 200 ? msg.slice(0, 200) + '...' : msg);
             } finally {
               submittingRef.current = false;
@@ -940,24 +2356,18 @@ export default function App({ productId, variantId }: AppProps = {}) {
             submittingRef.current = true;
             let shouldResetSubmitting = true;
             try {
+              if (config.moveHolesMode) {
+                setConfig({ moveHolesMode: false });
+              }
               setIsSubmitting(true);
               setSubmittingAction('buy');
               setSubmittingStep('buy:building');
               const tBuyTotal = performance.now();
 
               const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
-              console.log('Resolved Shopify IDs for Buy Now:', resolvedShopifyIds);
+              DEBUG() && console.log('Resolved Shopify IDs for Buy Now:', resolvedShopifyIds);
 
-              // Capture screenshot for background upload
-              let screenshotBase64: string | undefined;
-              try {
-                let canvasEl: HTMLCanvasElement | null = null;
-                const rootNode = appLayoutRef.current?.getRootNode();
-                if (rootNode && rootNode !== document) canvasEl = (rootNode as ShadowRoot).querySelector('canvas');
-                if (!canvasEl && appLayoutRef.current) canvasEl = appLayoutRef.current.querySelector('canvas');
-                if (!canvasEl) canvasEl = document.querySelector('canvas');
-                if (canvasEl) screenshotBase64 = canvasEl.toDataURL('image/png');
-              } catch { /* ignore */ }
+              const screenshotBase64Promise = captureCanvasScreenshot(appLayoutRef, { resetView: true });
 
               const payload = {
                 w: config.w, l: config.l, sk: config.sk,
@@ -977,99 +2387,108 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 shopifyVariantId: resolvedShopifyIds.variantId,
               };
 
-              // Step 1: Create variant (with timeout for mobile reliability)
-              const buyApiController = new AbortController();
-              const buyApiTimeout = setTimeout(() => buyApiController.abort(), 30000);
-              let res: Response;
-              try {
-                res = await fetch(`${apiBase}/api/add-to-cart`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(payload),
-                  signal: buyApiController.signal,
-                });
-              } catch (fetchErr: any) {
-                if (fetchErr.name === 'AbortError') {
-                  throw new Error('Request timed out. Please check your connection and try again.');
-                }
-                throw new Error('Network error. Please check your connection and try again.');
-              } finally {
-                clearTimeout(buyApiTimeout);
+              if (!isApiReachable()) {
+                DEBUG() && console.log('[BUY] API not reached during page load — warming up connection');
+                await loadPricingFromAPI(apiBase);
               }
 
-              const data = await res.json().catch(() => null);
+              const { res, data, attempts: buyApiAttempts, totalMs: buyApiMs } = await postAddToCartApi({
+                apiBase,
+                payload,
+                tag: 'BUY',
+              });
               if (!res.ok) {
                 console.error('Buy Now API error:', res.status, data);
                 throw new Error(data?.error || `HTTP error! status: ${res.status}`);
               }
               if (data?._timing) {
-                const { authPricingMs, optionNameMs, variantMs, totalMs } = data._timing;
-                console.log(`[BUY] API: ${totalMs}ms | auth+pricing: ${authPricingMs}ms | optionName: ${optionNameMs}ms | variant: ${variantMs}ms`);
+                const { authPricingMs, optionNameMs, variantMs, propagationMs, totalMs } = data._timing;
+                DEBUG() && console.log(`[BUY] API: ${buyApiMs}ms (${buyApiAttempts} attempt${buyApiAttempts > 1 ? 's' : ''}) | auth+pricing: ${authPricingMs}ms | optionName: ${optionNameMs}ms | variant: ${variantMs}ms | propagation: ${propagationMs ?? 0}ms | server total: ${totalMs}ms`);
+              } else {
+                DEBUG() && console.log(`[BUY] API: ${buyApiMs}ms (${buyApiAttempts} attempt${buyApiAttempts > 1 ? 's' : ''})`);
               }
+
+              DEBUG() && console.log(`[BUY] Server result: variantId=${data.variantId}, reused=${data.variantReused}, propagated=${data.propagated}, price=${data.price}`);
 
               // Step 2: Clear cart, add item, then verify price before checkout
               setSubmittingStep('buy:adding');
-              await fetch('/cart/clear.js', { method: 'POST' });
+              await fetch(buildShopifyPath('cart/clear.js'), { method: 'POST' });
+              // Brief pause after cart clear to avoid Shopify 429 rate limiting
+              await new Promise(r => setTimeout(r, 300));
 
               const cartProperties: Record<string, string> = {};
               for (const prop of (data.properties || [])) {
                 cartProperties[prop.key] = prop.value;
               }
 
-              const buyCartPayload = JSON.stringify({
+              const buyCartBody = {
                 items: [{
                   id: Number(data.variantId),
                   quantity: data.quantity,
                   properties: cartProperties,
                 }],
+              };
+
+              // Unified retry: cart add + price verification in one loop
+              const buyMaxWaitMs = getForegroundWaitBudgetMs('BUY');
+              const buyResult = await addToCartWithRetry({
+                cartPayload: buyCartBody,
+                variantId: Number(data.variantId),
+                sectionIds: [],
+                maxWaitMs: buyMaxWaitMs,
+                tag: 'BUY',
+                onStep: setSubmittingStep,
               });
 
-              // Retry with exponential backoff + jitter (same as cart flow)
-              const { cartRes, cartErrorText } = await retryCartAdd(buyCartPayload, 4, 'BUY');
+              DEBUG() && console.log(`[BUY] Cart retry: ${buyResult.totalMs}ms (${buyResult.attempts} attempts, ok=${buyResult.ok})`);
 
-              if (!cartRes || !cartRes.ok) {
-                console.error('[BUY] All retries failed:', cartRes?.status, cartErrorText.slice(0, 200));
-                const msg = cartRes?.status === 429
-                  ? 'Too many requests — please wait a moment and try again.'
-                  : 'Something went wrong — please try again in a moment.';
-                throw new Error(msg);
+              let finalBuyResult = buyResult;
+              if (!finalBuyResult.ok) {
+                if (finalBuyResult.hardFail) {
+                  throw new Error(buyResult.error || 'Something went wrong â€” please try again in a moment.');
+                }
+                finalBuyResult = await continueCartPreparationUntilVerified({
+                  cartPayload: buyCartBody,
+                  variantId: Number(data.variantId),
+                  sectionIds: [],
+                  pendingPhase: finalBuyResult.pendingPhase || 'adding',
+                  tag: 'BUY',
+                  onStep: setSubmittingStep,
+                });
+              }
+              if (!finalBuyResult.ok) {
+                throw new Error('We could not confirm the cart update yet. Please refresh the cart and try again.');
               }
 
-              // Step 3: For NEW variants, verify price before checkout — $0 checkout is unacceptable
-              const buyCartData = await cartRes.json().catch(() => null);
-              const buyItemPrice = buyCartData?.items?.[0]?.price ?? 0;
-
-              if (!data.variantReused && (buyItemPrice === 0 || buyItemPrice === '0')) {
-                setSubmittingStep('buy:syncing');
-                const buyIsMobile = window.innerWidth <= 767 || /Mobi|Android|iPhone/i.test(navigator.userAgent);
-                const buyPollTimeout = buyIsMobile ? 10000 : 6000;
-                const tPoll = performance.now();
-                const { priceOk } = await waitForCartPriceUpdate([], buyPollTimeout);
-                console.log(`[BUY] Price poll: ${Math.round(performance.now() - tPoll)}ms, ok=${priceOk}, mobile=${buyIsMobile}`);
-                if (!priceOk) {
-                  throw new Error('Price is still updating. Please try again in a few seconds.');
+              // Upload image in background â€” wait for the upload to complete
+              // before navigating, so the request isn't cancelled mid-flight.
+              const screenshotBase64 = await screenshotBase64Promise;
+              if (screenshotBase64 && data.variantId && !data.variantReused) {
+                const tImg = performance.now();
+                DEBUG() && console.log('[IMG] Buy Now â€” uploading before checkout redirect...');
+                try {
+                  const imgRes = await fetch(`${apiBase}/api/variant-image`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      variantId: data.variantId,
+                      productId: resolvedShopifyIds.productId,
+                      image: screenshotBase64,
+                    }),
+                  });
+                  const imgMs = Math.round(performance.now() - tImg);
+                  DEBUG() && console.log(`[IMG] Buy Now upload: ${imgRes.ok ? 'ok' : imgRes.status} in ${imgMs}ms`);
+                } catch (e: any) {
+                  console.warn('[IMG] Buy Now upload failed:', e?.message);
                 }
               }
 
-              // Upload image in background (will process even after navigation starts)
-              if (screenshotBase64 && data.variantId && !data.variantReused) {
-                fetch(`${apiBase}/api/variant-image`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    variantId: data.variantId,
-                    productId: resolvedShopifyIds.productId,
-                    image: screenshotBase64,
-                  }),
-                }).catch(() => { /* fire-and-forget */ });
-              }
-
               // Step 4: Go straight to checkout
-              console.log(`[BUY] ✓ TOTAL: ${Math.round(performance.now() - tBuyTotal)}ms`);
+              DEBUG() && console.log(`[BUY] âœ“ TOTAL: ${Math.round(performance.now() - tBuyTotal)}ms`);
               setSubmittingStep('buy:redirecting');
               saveConfigForRestore();
               shouldResetSubmitting = false;
-              window.location.href = '/checkout';
+              window.location.href = buildShopifyPath('checkout');
               // Safety: if navigation doesn't complete in 15s (slow mobile), unlock the UI
               setTimeout(() => {
                 submittingRef.current = false;
@@ -1081,7 +2500,8 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
             } catch (err: any) {
               console.error('Buy now error:', err);
-              alert(`Failed to create order: ${err.message}`);
+              const msg = formatCheckoutErrorMessage(err?.message || 'Unknown error', 'buy');
+              alert(msg.length > 220 ? msg.slice(0, 220) + '...' : msg);
             } finally {
               submittingRef.current = false;
               if (shouldResetSubmitting) {
@@ -1148,3 +2568,5 @@ export default function App({ productId, variantId }: AppProps = {}) {
     </>
   );
 }
+
+

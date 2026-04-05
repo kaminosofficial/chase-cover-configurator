@@ -19,6 +19,11 @@ const COLLAR_KEYS: Record<HoleId, 'collarA' | 'collarB' | 'collarC'> = {
   C: 'collarC',
 };
 
+function formatInputNumber(value: number): string {
+  if (!Number.isFinite(value)) return '';
+  return Number(value.toFixed(3)).toString();
+}
+
 function CollarInput({
   label,
   value,
@@ -34,11 +39,11 @@ function CollarInput({
   onCommit: (v: number) => void;
   tooltip?: string;
 }) {
-  const [inputVal, setInputVal] = useState(value.toString());
+  const [inputVal, setInputVal] = useState(formatInputNumber(value));
   const [focused, setFocused] = useState(false);
 
   useEffect(() => {
-    if (!focused) setInputVal(value.toString());
+    if (!focused) setInputVal(formatInputNumber(value));
   }, [value, focused]);
 
   function commit() {
@@ -46,7 +51,7 @@ function CollarInput({
     let v = parseFloat(inputVal) || min;
     v = Math.ceil(v * 8) / 8;
     v = Math.max(min, Math.min(max, v));
-    setInputVal(v.toString());
+    setInputVal(formatInputNumber(v));
     onCommit(v);
   }
 
@@ -494,7 +499,9 @@ export function CollarGroup({ id, label }: Props) {
 
   return (
     <div className="collar-group">
-      <div className="collar-group-title">{label}</div>
+      <div className="collar-group-title">
+        <span className="collar-group-title-label">{label}</span>
+      </div>
 
       <div className="field" style={{ marginBottom: 12 }}>
         <label style={{ display: 'flex', alignItems: 'center' }}>
@@ -514,19 +521,17 @@ export function CollarGroup({ id, label }: Props) {
           Centered on Cover
           <InfoTooltip text="When centered, the hole is automatically placed at the center slot for the selected cover layout. Uncheck to set custom offsets from each edge." />
         </label>
-        <label className={`centered-check${collar.shape === 'rect' ? ' centered-check-disabled' : ''}`} style={{ display: 'flex', alignItems: 'center' }}>
-          <input
-            type="checkbox"
-            checked={collar.shape === 'rect' ? false : collar.stormCollar || false}
-            disabled={collar.shape === 'rect'}
-            onChange={e => setCollar(id, { stormCollar: e.target.checked })}
-          />
-          Add Storm Collar
-          <InfoTooltip text={collar.shape === 'rect'
-            ? 'Storm collars are available for round holes only.'
-            : 'Adds a conical metal flashing at the base of the collar that sheds water away from the pipe penetration. The storm collar top opening is 1 inch smaller than the flue hole diameter.'}
-          />
-        </label>
+        {collar.shape !== 'rect' && (
+          <label className="centered-check" style={{ display: 'flex', alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={collar.stormCollar || false}
+              onChange={e => setCollar(id, { stormCollar: e.target.checked })}
+            />
+            Add Storm Collar
+            <InfoTooltip text="Adds a conical metal flashing at the base of the collar that sheds water away from the pipe penetration. The storm collar top opening is 1 inch smaller than the flue hole diameter." />
+          </label>
+        )}
         <label className="centered-check">
           <input
             type="checkbox"

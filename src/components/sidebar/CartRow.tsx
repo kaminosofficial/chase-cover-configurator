@@ -32,16 +32,18 @@ function ShopLogo() {
 }
 
 function getCartLabel(step: string): string {
-  if (step === 'cart:building') return 'Crafting your cover...';
-  if (step === 'cart:adding')   return 'Adding to cart...';
-  if (step === 'cart:syncing')  return 'Confirming price...';
+  if (step === 'cart:building') return 'Preparing...';
+  if (step === 'cart:adding')   return 'Adding...';
+  if (step === 'cart:pending')  return 'Finalizing...';
+  if (step === 'cart:syncing')  return 'Almost there...';
   return 'Processing...';
 }
 
 function getBuyLabel(step: string): string {
-  if (step === 'buy:building')    return 'Crafting your cover...';
+  if (step === 'buy:building')    return 'Preparing...';
   if (step === 'buy:adding')      return 'Preparing checkout...';
-  if (step === 'buy:syncing')     return 'Confirming price...';
+  if (step === 'buy:pending')     return 'Finalizing...';
+  if (step === 'buy:syncing')     return 'Almost there...';
   if (step === 'buy:redirecting') return 'Off we go!';
   return 'Processing...';
 }
@@ -95,8 +97,8 @@ export function CartRow({ onAddToCart, onBuyNow, isSubmitting = false, submittin
               disabled={quantity <= 1}
               aria-label="Decrease quantity"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="2" viewBox="0 0 10 2" fill="none">
-                <path d="M1 1H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                <path d="M2 4L5 7L8 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
             <input
@@ -124,8 +126,8 @@ export function CartRow({ onAddToCart, onBuyNow, isSubmitting = false, submittin
               disabled={quantity >= MAX_QTY}
               aria-label="Increase quantity"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <path d="M5 1V9M1 5H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                <path d="M2 6L5 3L8 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
           </div>

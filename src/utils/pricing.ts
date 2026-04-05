@@ -3,6 +3,7 @@ export interface PricingLike {
   EXT_S_W: number;
   EXT_S_L: number;
   EXT_S_AREA: number;
+  MARGIN_RATE: number;
   HOLE_PRICE: number;
   SKIRT_SURCHARGE: number;
   SKIRT_THRESHOLD: number;
@@ -23,6 +24,10 @@ export interface PricingInputLike {
 }
 
 export interface PricingBreakdown {
+  perimeter: number;
+  marginRate: number;
+  marginMultiplier: number;
+  basePriceBeforeMargin: number;
   basePrice: number;
   holesCost: number;
   skirtCost: number;
@@ -126,13 +131,9 @@ export const DEFAULT_MODEL_COEFFICIENTS: Record<string, number> = {
 };
 
 export const DEFAULT_GAUGE_MULT: Record<number, number> = {
-  24: 1.0,
-  20: 1.3,
-  18: 1.4,
-  16: 1.6,
-  14: 1.8,
-  12: 2.7,
-  10: 3.4,
+  24: 3.2,
+  22: 4,
+  20: 4.8,
 };
 
 export const DEFAULT_MATERIAL_MULT: Record<string, number> = {
@@ -206,6 +207,13 @@ export function normalizePaintedMultiplier(value: number): number {
   return value;
 }
 
+export function normalizeMarginRate(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 2) return value / 100;
+  return value;
+}
+
 export function computeBasePanelPrice(w: number, l: number, pricing: PricingLike): number {
   if (!Number.isFinite(w) || !Number.isFinite(l) || w <= 0 || l <= 0) return 0;
 
@@ -226,17 +234,26 @@ export function computePricingBreakdown(
   pricing: PricingLike,
   stormCollarCost = 0
 ): PricingBreakdown {
-  const basePrice = computeBasePanelPrice(config.w, config.l, pricing);
-  const holesCost = Math.max(0, config.holes || 0) * pricing.HOLE_PRICE;
-  const skirtCost = config.sk >= pricing.SKIRT_THRESHOLD ? pricing.SKIRT_SURCHARGE : 0;
-  const rawCost = basePrice + holesCost + skirtCost + stormCollarCost;
+  const skirt = Number.isFinite(config.sk) ? Math.max(0, config.sk) : 0;
+  const perimeter = (config.w + 2 * skirt) + (config.l + 2 * skirt);
   const gaugeFactor = pricing.GAUGE_MULT[config.gauge] || 1;
+  const marginRate = pricing.MARGIN_RATE;
+  const marginMultiplier = 1 + marginRate;
+  const basePriceBeforeMargin = perimeter * gaugeFactor;
+  const basePrice = basePriceBeforeMargin * marginMultiplier;
+  const holesCost = Math.max(0, config.holes || 0) * pricing.HOLE_PRICE;
+  const skirtCost = skirt >= pricing.SKIRT_THRESHOLD ? pricing.SKIRT_SURCHARGE : 0;
+  const rawCost = basePrice + holesCost + skirtCost + stormCollarCost;
   const materialFactor = pricing.MATERIAL_MULT[config.mat] || 1;
-  const prePaintCost = rawCost * gaugeFactor * materialFactor;
-  const paintedMultiplier = (config.pc && config.mat !== 'copper') ? normalizePaintedMultiplier(pricing.PAINTED_MULTIPLIER) : 1;
+  const prePaintCost = rawCost * materialFactor;
+  const paintedMultiplier = (config.pc && config.mat !== 'copper') ? pricing.PAINTED_MULTIPLIER : 1;
   const total = prePaintCost * paintedMultiplier;
 
   return {
+    perimeter,
+    marginRate,
+    marginMultiplier,
+    basePriceBeforeMargin,
     basePrice,
     holesCost,
     skirtCost,

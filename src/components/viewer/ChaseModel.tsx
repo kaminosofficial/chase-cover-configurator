@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
@@ -240,7 +240,7 @@ export function ChaseModel() {
     const [activeId, setActiveId] = useState<string | null>(null);
 
     const config = useConfigStore(state => state);
-    const mat = mkMat(config.mat, config.pc, config.pcCol);
+    const mat = useMemo(() => mkMat(config.mat, config.pc, config.pcCol), [config.mat, config.pc, config.pcCol]);
 
     const [mountTime] = useState(() => performance.now());
 

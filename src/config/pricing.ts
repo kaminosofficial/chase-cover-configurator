@@ -2,7 +2,6 @@ import {
     DEFAULT_GAUGE_MULT,
     DEFAULT_MATERIAL_MULT,
     DEFAULT_MODEL_COEFFICIENTS,
-    normalizePaintedMultiplier,
     type PricingLike,
 } from '../utils/pricing.js';
 
@@ -18,6 +17,7 @@ export let PRICING: PricingConstants = {
     EXT_S_W: 4.245,
     EXT_S_L: 2.495,
     EXT_S_AREA: 0.040,
+    MARGIN_RATE: 0,
     HOLE_PRICE: 25,
     SKIRT_SURCHARGE: 75,
     SKIRT_THRESHOLD: 6,
@@ -67,6 +67,7 @@ export function getStormCollarPrice(holeDia: number): number {
 }
 
 let _loaded = false;
+let _apiReachable = false;
 const _listeners: Array<() => void> = [];
 
 export function onPricingLoaded(cb: () => void) {
@@ -74,33 +75,45 @@ export function onPricingLoaded(cb: () => void) {
     _listeners.push(cb);
 }
 
+/** Whether the Vercel API was successfully reached at least once this session. */
+export function isApiReachable(): boolean {
+    return _apiReachable;
+}
+
 // Fetch pricing from the Vercel API (which reads from Google Sheets)
 // This is called once on app startup.
 // The API_BASE should be set in shopify-entry.tsx or detected automatically.
+const PRICING_LOAD_MAX_ATTEMPTS = 3;
+
 export async function loadPricingFromAPI(apiBase: string) {
-    try {
-        const res = await fetch(`${apiBase}/api/pricing`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    for (let attempt = 1; attempt <= PRICING_LOAD_MAX_ATTEMPTS; attempt++) {
+        try {
+            const res = await fetch(`${apiBase}/api/pricing`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        const contentType = res.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-            throw new Error(`Expected JSON, got ${contentType}`);
+            const contentType = res.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                throw new Error(`Expected JSON, got ${contentType}`);
+            }
+
+            const data = await res.json();
+            PRICING = {
+                ...PRICING,
+                ...data,
+                GAUGE_MULT: { ...PRICING.GAUGE_MULT, ...(data.GAUGE_MULT ?? {}) },
+                MATERIAL_MULT: { ...PRICING.MATERIAL_MULT, ...(data.MATERIAL_MULT ?? {}) },
+                MODEL_COEFFICIENTS: { ...PRICING.MODEL_COEFFICIENTS, ...(data.MODEL_COEFFICIENTS ?? {}) },
+                STORM_COLLAR_PRICES: { ...PRICING.STORM_COLLAR_PRICES, ...(data.STORM_COLLAR_PRICES ?? {}) },
+            };
+            _apiReachable = true;
+            break;
+        } catch (err) {
+            if (attempt < PRICING_LOAD_MAX_ATTEMPTS) {
+                await new Promise(r => setTimeout(r, 1500 * attempt));
+                continue;
+            }
+            console.warn('[ChaseConfigurator] Failed to fetch pricing from API after', PRICING_LOAD_MAX_ATTEMPTS, 'attempts, using defaults:', err);
         }
-
-        const data = await res.json();
-        PRICING = {
-            ...PRICING,
-            ...data,
-            PAINTED_MULTIPLIER: normalizePaintedMultiplier(
-                data.PAINTED_MULTIPLIER ?? PRICING.PAINTED_MULTIPLIER
-            ),
-            GAUGE_MULT: { ...PRICING.GAUGE_MULT, ...(data.GAUGE_MULT ?? {}) },
-            MATERIAL_MULT: { ...PRICING.MATERIAL_MULT, ...(data.MATERIAL_MULT ?? {}) },
-            MODEL_COEFFICIENTS: { ...PRICING.MODEL_COEFFICIENTS, ...(data.MODEL_COEFFICIENTS ?? {}) },
-            STORM_COLLAR_PRICES: { ...PRICING.STORM_COLLAR_PRICES, ...(data.STORM_COLLAR_PRICES ?? {}) },
-        };
-    } catch (err) {
-        console.warn('[ChaseConfigurator] Failed to fetch pricing from API, using defaults:', err);
     }
     _loaded = true;
     _listeners.forEach(cb => cb());

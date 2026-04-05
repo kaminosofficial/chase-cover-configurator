@@ -1,16 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchPricingFromPublicSheet, getStormCollarPrice } from '../lib/pricing-sheet.js';
+import { getShopifyAccessToken, SHOPIFY_STORE, warnUnknownOrigin } from '../lib/shopify-auth.js';
 import { getHoleEdgeOffsets, holeWorld } from '../src/utils/geometry.js';
 import { computePricingBreakdown } from '../src/utils/pricing.js';
 import { RAL_COLORS } from '../src/config/ralColors.js';
 
-const SHOPIFY_STORE = (process.env.SHOPIFY_STORE || '').trim();
-const SHOPIFY_ACCESS_TOKEN = (process.env.SHOPIFY_ACCESS_TOKEN || '').trim() || undefined;
-const SHOPIFY_CLIENT_ID = (process.env.SHOPIFY_CLIENT_ID || '').trim() || undefined;
-const SHOPIFY_CLIENT_SECRET = (process.env.SHOPIFY_CLIENT_SECRET || '').trim() || undefined;
 const GOOGLE_SHEET_ID = (process.env.GOOGLE_SHEET_ID || '').trim();
 const SHOPIFY_PRODUCT_ID = (process.env.SHOPIFY_PRODUCT_ID || '').trim() || undefined; // fallback product ID
-const SHOPIFY_TOKEN_URL = `https://${SHOPIFY_STORE}/admin/oauth/access_token`;
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -58,52 +54,11 @@ interface OrderConfig {
 /*  Shopify Auth (same as create-order)                                */
 /* ------------------------------------------------------------------ */
 
-let shopifyTokenCache: { token: string; expiresAt: number } | null = null;
-
 function applyProductIdFallback(config: OrderConfig) {
     if (!config.shopifyProductId && SHOPIFY_PRODUCT_ID) {
         config.shopifyProductId = SHOPIFY_PRODUCT_ID;
         console.log('[CART] Using env var SHOPIFY_PRODUCT_ID:', SHOPIFY_PRODUCT_ID);
     }
-}
-
-async function getShopifyAccessToken() {
-    if (SHOPIFY_ACCESS_TOKEN) {
-        console.log('[CART] Using static SHOPIFY_ACCESS_TOKEN');
-        return SHOPIFY_ACCESS_TOKEN;
-    }
-
-    if (shopifyTokenCache && shopifyTokenCache.expiresAt > Date.now() + 5 * 60 * 1000) {
-        console.log('[CART] Using cached OAuth token');
-        return shopifyTokenCache.token;
-    }
-
-    if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) {
-        throw new Error('Missing Shopify Credentials.');
-    }
-
-    const tokenBody = new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: SHOPIFY_CLIENT_ID,
-        client_secret: SHOPIFY_CLIENT_SECRET,
-    });
-
-    const res = await fetch(SHOPIFY_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody.toString(),
-    });
-
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Shopify token request failed: ${res.status} ${text}`);
-    }
-
-    const data = await res.json();
-    const expiresIn = data.expires_in || 3600;
-    shopifyTokenCache = { token: data.access_token, expiresAt: Date.now() + expiresIn * 1000 };
-    console.log('[CART] Received OAuth token, expires in', expiresIn, 'seconds');
-    return data.access_token;
 }
 
 /* ------------------------------------------------------------------ */
@@ -156,7 +111,14 @@ function getHoleCutoutValue(id: 'A' | 'B' | 'C', config: OrderConfig): string {
         : id === 'B'
             ? config.holeCutoutB
             : config.holeCutoutC;
-    if (cachedValue) return cachedValue;
+    if (cachedValue) {
+        return cachedValue
+            .replace(/[\[\]]/g, '')
+            .replace(/[A-C]\d\((Top|Right|Bottom|Left)\):/g, '$1:')
+            .replace(/\s{2,}/g, ' ')
+            .replace(/\s+\|/g, ' |')
+            .trim();
+    }
 
     const state = {
         ...config,
@@ -168,13 +130,18 @@ function getHoleCutoutValue(id: 'A' | 'B' | 'C', config: OrderConfig): string {
 
     const hole = holeWorld(id, state);
     const offsets = getHoleEdgeOffsets(hole, state);
-    return `${id}1(Top): ${formatFrac(offsets.top)}" | ${id}2(Right): ${formatFrac(offsets.right)}" | ${id}3(Bottom): ${formatFrac(offsets.bottom)}" | ${id}4(Left): ${formatFrac(offsets.left)}"`;
+    return `Top: ${formatFrac(offsets.top)}" | Right: ${formatFrac(offsets.right)}" | Bottom: ${formatFrac(offsets.bottom)}" | Left: ${formatFrac(offsets.left)}"`;
 }
 
 function getHolePositionLabel(index: number, total: number): string {
     if (total === 1) return '';
     if (total === 2) return index === 0 ? 'Left' : 'Right';
     return index === 0 ? 'Left' : index === 1 ? 'Middle' : 'Right';
+}
+
+function getHoleDisplayLabel(index: number, total: number): string {
+    const position = getHolePositionLabel(index, total);
+    return position ? `Hole ${index + 1}(${position})` : `Hole ${index + 1}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -185,26 +152,23 @@ function buildCartProperties(config: OrderConfig): { key: string; value: string 
     const props: { key: string; value: string }[] = [
         { key: 'Dimensions', value: `${formatFrac(config.l)}" L × ${formatFrac(config.w)}" W × ${formatFrac(config.sk)}" Skirt` },
         { key: 'Material & Gauge', value: `${getMaterialLabel(config.mat)} — ${config.gauge}ga` },
-        { key: 'Options', value: `Drip Edge: ${config.drip ? 'Yes' : 'No'} · Diagonal Crease: ${config.diag ? 'Yes' : 'No'}` },
+        { key: 'Options', value: `Drip Edge: ${config.drip ? 'Yes' : 'No'} | Diagonal Crease: ${config.diag ? 'Yes' : 'No'}` },
     ];
 
     if (config.pc && config.mat !== 'copper') {
         props.push({ key: 'Powder Coat', value: getColorLabel(config.pcCol) });
     }
 
-    props.push({ key: 'Holes', value: `${config.holes}` });
-
     // Hole details
     const collars = [
-        { label: 'H1', id: 'A' as const, data: config.collarA },
-        { label: 'H2', id: 'B' as const, data: config.collarB },
-        { label: 'H3', id: 'C' as const, data: config.collarC },
+        { id: 'A' as const, data: config.collarA },
+        { id: 'B' as const, data: config.collarB },
+        { id: 'C' as const, data: config.collarC },
     ];
     for (let i = 0; i < config.holes; i++) {
         const c = collars[i];
         if (!c.data) continue;
-        const posLabel = getHolePositionLabel(i, config.holes);
-        const label = config.holes === 1 ? 'Hole' : `${c.label} (${posLabel})`;
+        const label = getHoleDisplayLabel(i, config.holes);
         const isRect = c.data.shape === 'rect';
 
         if (isRect) {
@@ -217,7 +181,7 @@ function buildCartProperties(config: OrderConfig): { key: string; value: string 
 
         const cutoutOffsets = getHoleCutoutValue(c.id, config);
         props.push({
-            key: `${config.holes === 1 ? '' : c.label + ' '}Position`,
+            key: config.holes === 1 ? 'Position' : `Hole ${i + 1} Position`,
             value: c.data.centered ? `Centered on cover | ${cutoutOffsets}` : cutoutOffsets,
         });
     }
@@ -379,10 +343,12 @@ async function shopifyGraphQL(query: string, accessToken: string, variables?: Re
     try { return JSON.parse(text); } catch { return { errors: [{ message: text.slice(0, 300) }] }; }
 }
 
-/* ---- Cache for product option name ---- */
-let cachedOptionName: string | null = null;
+/* ---- Caches for product metadata ---- */
+const cachedOptionNames = new Map<string, string>();
+const cachedProductHandles = new Map<string, string>();
 
 async function getProductOptionName(productId: string, accessToken: string): Promise<string> {
+    const cachedOptionName = cachedOptionNames.get(productId);
     if (cachedOptionName) return cachedOptionName;
 
     const t0 = Date.now();
@@ -395,13 +361,123 @@ async function getProductOptionName(productId: string, accessToken: string): Pro
         const name = result?.data?.product?.options?.[0]?.name;
         console.log('[CART] getProductOptionName:', name, 'in', Date.now() - t0, 'ms');
         if (name) {
-            cachedOptionName = name;
+            cachedOptionNames.set(productId, name);
             return name;
         }
     } catch (e: any) {
         console.warn('[CART] Failed to get option name in', Date.now() - t0, 'ms:', e.message);
     }
     return 'Title'; // Shopify's default option name
+}
+
+/* ---- Cache for product handle ---- */
+
+async function getProductHandle(productId: string, accessToken: string): Promise<string | null> {
+    const cachedProductHandle = cachedProductHandles.get(productId);
+    if (cachedProductHandle) return cachedProductHandle;
+
+    const t0 = Date.now();
+    try {
+        const res = await fetch(
+            `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}.json?fields=handle`,
+            { headers: { 'X-Shopify-Access-Token': accessToken } }
+        );
+        if (!res.ok) {
+            console.warn('[CART] getProductHandle failed:', res.status, 'in', Date.now() - t0, 'ms');
+            return null;
+        }
+        const data = await res.json();
+        const handle = data?.product?.handle;
+        console.log('[CART] getProductHandle:', handle, 'in', Date.now() - t0, 'ms');
+        if (handle) {
+            cachedProductHandles.set(productId, handle);
+            return handle;
+        }
+    } catch (e: any) {
+        console.warn('[CART] Failed to get product handle in', Date.now() - t0, 'ms:', e.message);
+    }
+    return null;
+}
+
+/* ---- Storefront propagation check ---- */
+
+/**
+ * After creating a new variant via Admin API, the Shopify storefront has an
+ * eventual consistency delay (~9-10s average) before /cart/add.js accepts it.
+ *
+ * This function polls the storefront's /cart/add.js directly — the definitive
+ * test of purchasability. A stateless POST (no cookies) creates an ephemeral
+ * anonymous cart that Shopify garbage-collects automatically.
+ *
+ * Once the variant appears in the product JSON with the correct price, the
+ * client's /cart/add.js call will succeed immediately (both endpoints reflect
+ * the same storefront propagation state for browser clients).
+ *
+ * IMPORTANT: Uses the customer-facing storefront domain (e.g. kaminos.com),
+ * NOT the .myshopify.com admin domain, because propagation is faster on the
+ * custom domain. Uses the lightweight GET /products/{handle}.json endpoint
+ * instead of POST /cart/add.js to avoid storefront rate limits (429).
+ */
+async function waitForStorefrontPropagation(
+    variantId: string,
+    expectedPrice: string,
+    storefrontDomain: string,
+    productHandle: string | null,
+    maxWaitMs: number = 18000,
+    intervalMs: number = 1500
+): Promise<boolean> {
+    if (!productHandle) {
+        console.warn('[PROP] No product handle — skipping propagation check');
+        return false;
+    }
+
+    const start = Date.now();
+    const numericId = Number(variantId);
+    let attempt = 0;
+
+    console.log(`[PROP] Polling https://${storefrontDomain}/products/${productHandle}.json for variant ${variantId} at $${expectedPrice}`);
+
+    while (Date.now() - start < maxWaitMs) {
+        attempt++;
+        // Wait before each poll (including the first — give Shopify initial propagation time)
+        await new Promise(r => setTimeout(r, attempt === 1 ? 1000 : intervalMs));
+
+        try {
+            const url = `https://${storefrontDomain}/products/${productHandle}.json?v=${Date.now()}`;
+            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+
+            if (res.status === 429) {
+                console.log(`[PROP] Poll ${attempt}: rate limited (429) — waiting 3s (${Date.now() - start}ms)`);
+                await new Promise(r => setTimeout(r, 3000));
+                continue;
+            }
+
+            if (!res.ok) {
+                console.warn(`[PROP] Poll ${attempt}: HTTP ${res.status} (${Date.now() - start}ms)`);
+                continue;
+            }
+
+            const data = await res.json();
+            const variants = data?.product?.variants;
+            if (!Array.isArray(variants)) continue;
+
+            const found = variants.find((v: any) => v.id === numericId);
+            if (found && found.price === expectedPrice) {
+                console.log(`[PROP] Variant ${variantId} visible at $${expectedPrice} after ${Date.now() - start}ms (${attempt} polls)`);
+                return true;
+            }
+
+            if (attempt <= 3 || attempt % 4 === 0) {
+                const status = found ? `price=${found.price}` : 'not found';
+                console.log(`[PROP] Poll ${attempt}: variant ${status} (${Date.now() - start}ms)`);
+            }
+        } catch (e: any) {
+            console.warn(`[PROP] Poll ${attempt} error: ${e.message}`);
+        }
+    }
+
+    console.warn(`[PROP] Timed out after ${Date.now() - start}ms (${attempt} polls)`);
+    return false;
 }
 
 /* ---- Create variant via GraphQL (tracked=false in single call) ---- */
@@ -543,6 +619,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const hasImage = !!config.image;
         console.log('[CART] === Add-to-cart START ===', { productId: config.shopifyProductId, hasImage });
 
+        warnUnknownOrigin(req.headers.origin as string | undefined, 'CART');
+
+        // Extract storefront domain from request origin/referer.
+        // The .myshopify.com admin domain has much slower propagation than the
+        // custom storefront domain (kaminos.com), so we MUST use the custom one.
+        const origin = req.headers.origin || req.headers.referer || '';
+        let storefrontDomain = '';
+        try {
+            const parsed = new URL(origin);
+            storefrontDomain = parsed.hostname;
+        } catch { /* ignore */ }
+        // Fallback: use SHOPIFY_STORE if no origin (shouldn't happen in production)
+        if (!storefrontDomain) storefrontDomain = SHOPIFY_STORE;
+        console.log('[CART] Storefront domain:', storefrontDomain);
+
         applyProductIdFallback(config);
 
         // Validate
@@ -591,10 +682,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
-        // 3. Get option name + calculate price IN PARALLEL
+        // 3. Get option name + product handle + calculate price IN PARALLEL
         const t3 = Date.now();
-        const [optionName] = await Promise.all([
+        const [optionName, productHandle] = await Promise.all([
             getProductOptionName(config.shopifyProductId, accessToken),
+            getProductHandle(config.shopifyProductId, accessToken),
         ]);
         const optionNameMs = Date.now() - t3;
 
@@ -656,21 +748,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
-        // 5. Build line item properties
+        // 5. Quick propagation hint (3s max — client owns the real retry loop)
+        let propagated = true;
+        let propagationMs = 0;
+        if (!existingId && variantId) {
+            const tProp = Date.now();
+            propagated = await waitForStorefrontPropagation(variantId, priceStr, storefrontDomain, productHandle, 1000, 500);
+            propagationMs = Date.now() - tProp;
+            console.log(`[CART] [5] Propagation hint: ${propagated ? 'confirmed' : 'not yet'} in ${propagationMs}ms`);
+        } else if (existingId) {
+            console.log('[CART] [5] Reused variant — skipping propagation');
+        }
+
+        // 6. Build line item properties
         const properties = buildCartProperties(config);
         const quantity = Math.max(1, Math.min(99, Math.round(config.quantity || 1)));
 
         const totalMs = Date.now() - handlerStart;
-        console.log('[CART] === DONE ===', totalMs, 'ms total | auth+pricing:', authPricingMs, '| optionName:', optionNameMs, '| variant:', variantMs);
+        console.log('[CART] === DONE ===', totalMs, 'ms total | auth+pricing:', authPricingMs, '| optionName:', optionNameMs, '| variant:', variantMs, '| propagation:', propagationMs);
 
         return res.status(200).json({
             success: true,
             variantId,
             variantReused: !!existingId,
+            propagated,
             quantity,
             price: priceStr,
             properties,
-            _timing: { authPricingMs, optionNameMs, variantMs, totalMs },
+            _timing: { authPricingMs, optionNameMs, variantMs, propagationMs, totalMs },
         });
     } catch (err: any) {
         console.error('[CART] Add-to-cart error:', err?.stack || err);

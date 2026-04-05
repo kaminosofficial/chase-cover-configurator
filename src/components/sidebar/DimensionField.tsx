@@ -8,10 +8,11 @@ interface DimProps {
   label: string;
   unit: string;
   max: number;
+  step?: number;
   tooltip?: string;
 }
 
-function DimInput({ configKey, label, unit, max, tooltip }: DimProps) {
+function DimInput({ configKey, label, unit, max, step = 0.125, tooltip }: DimProps) {
   const config = useConfigStore(s => s);
   const committed = config[configKey] as number;
   const [inputVal, setInputVal] = useState(committed.toString());
@@ -48,7 +49,7 @@ function DimInput({ configKey, label, unit, max, tooltip }: DimProps) {
   function commit() {
     setFocused(false);
     let raw = parseFloat(inputVal) || 0;
-    raw = Math.ceil(raw * 8) / 8; // snap to eighths (always round up)
+    raw = Math.ceil(raw / step) * step;
     const clamped = Math.max(getDynamicMin(), Math.min(max, raw));
     setInputVal(clamped.toString());
     config.set({ [configKey]: clamped });
@@ -63,7 +64,7 @@ function DimInput({ configKey, label, unit, max, tooltip }: DimProps) {
       <input
         type="number"
         value={inputVal}
-        step={0.125}
+        step={step}
         style={{ color: focused ? '#3b6dd4' : undefined }}
         onFocus={() => setFocused(true)}
         onChange={e => setInputVal(e.target.value)}
@@ -82,21 +83,23 @@ export function DimensionFields() {
         label="Length"
         unit="in"
         max={120}
-        tooltip="Measure the outside length of your chase opening from edge to edge. Add ¼″ for proper fitment."
+        step={0.5}
+        tooltip="Measure the outside length of your chase opening from edge to edge. Add 1/2'' for proper fitment."
       />
       <DimInput
         configKey="w"
         label="Width"
         unit="in"
         max={60}
-        tooltip="Measure the outside width of your chase opening from edge to edge. Add ¼″ for proper fitment."
+        step={0.5}
+        tooltip="Measure the outside width of your chase opening from edge to edge. Add 1/2'' for proper fitment."
       />
-      <DimInput 
-        configKey="sk" 
-        label="Skirt" 
-        unit="in" 
-        max={12} 
-        tooltip="The skirt wraps down over the sides of the chase. Standard is 2″–3″. Use 6″+ for added wind resistance."
+      <DimInput
+        configKey="sk"
+        label="Skirt"
+        unit="in"
+        max={12}
+        tooltip="The skirt wraps down over the sides of the chase. Standard is 2-3 in. Use 6+ in for added wind resistance."
       />
     </div>
   );

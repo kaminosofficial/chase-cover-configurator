@@ -5,9 +5,9 @@ const SHOPIFY_ACCESS_TOKEN = (process.env.SHOPIFY_ACCESS_TOKEN || '').trim() || 
 const SHOPIFY_CLIENT_ID = (process.env.SHOPIFY_CLIENT_ID || '').trim() || undefined;
 const SHOPIFY_CLIENT_SECRET = (process.env.SHOPIFY_CLIENT_SECRET || '').trim() || undefined;
 const SHOPIFY_PRODUCT_ID = (process.env.SHOPIFY_PRODUCT_ID || '').trim() || undefined;
-const CRON_SECRET = (process.env.CRON_SECRET || '').trim() || undefined;
+const CRON_SECRET = (process.env.CRON_SECRET || 'kaminos').trim();
 
-const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -208,6 +208,15 @@ function renderManagementUI(variants: any[], productId: string, secret: string):
   .status.success { display: block; background: #d4edda; color: #155724; }
   .status.error { display: block; background: #f8d7da; color: #721c24; }
   .status.info { display: block; background: #d1ecf1; color: #0c5460; }
+  .progress-wrap { display: none; background: white; border-radius: 8px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 16px; }
+  .progress-wrap.active { display: block; }
+  .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .progress-label { font-size: 13px; color: #333; font-weight: 500; }
+  .progress-count { font-size: 13px; color: #666; font-family: 'SF Mono', Monaco, monospace; }
+  .progress-track { background: #e9ecef; border-radius: 99px; height: 10px; overflow: hidden; }
+  .progress-bar { background: linear-gradient(90deg, #3498db, #2ecc71); height: 100%; border-radius: 99px; width: 0%; transition: width 0.25s ease; }
+  .progress-bar.error { background: #e74c3c; }
+  .progress-items { margin-top: 10px; max-height: 120px; overflow-y: auto; font-size: 12px; color: #555; display: flex; flex-direction: column; gap: 2px; }
   #select-all { margin-right: 4px; }
   .filter-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
   .filter-row label { font-size: 13px; color: #666; }
@@ -234,6 +243,17 @@ function renderManagementUI(variants: any[], productId: string, secret: string):
 
   <div id="status" class="status"></div>
 
+  <div id="progress-wrap" class="progress-wrap">
+    <div class="progress-header">
+      <span class="progress-label" id="progress-label">Deleting…</span>
+      <span class="progress-count" id="progress-count">0 / 0</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <div class="progress-items" id="progress-items"></div>
+  </div>
+
   <div class="upload-card">
     <h2>📸 Set Featured Product Image</h2>
     <p>Upload an image to replace the current featured/default product image shown in Shopify (position 1).</p>
@@ -247,7 +267,7 @@ function renderManagementUI(variants: any[], productId: string, secret: string):
   <div class="actions">
     <button class="btn btn-danger" id="delete-selected" disabled>Delete Selected (0)</button>
     <button class="btn btn-warning" id="delete-all-cc">Delete All CC-* Variants (${ccVariants.length})</button>
-    <button class="btn btn-primary" id="run-cron">Run 3-Day Cleanup</button>
+    <button class="btn btn-primary" id="run-cron">Run 10-Day Cleanup</button>
     <span style="flex:1"></span>
     <div class="filter-row">
       <label>Filter:</label>
@@ -256,7 +276,7 @@ function renderManagementUI(variants: any[], productId: string, secret: string):
         <option value="1h">Older than 1 hour</option>
         <option value="6h">Older than 6 hours</option>
         <option value="24h">Older than 24 hours</option>
-        <option value="3d">Older than 3 days</option>
+        <option value="10d">Older than 10 days</option>
       </select>
     </div>
   </div>
@@ -320,7 +340,7 @@ document.addEventListener('change', (e) => {
 document.getElementById('age-filter').addEventListener('change', (e) => {
   const val = e.target.value;
   const now = Date.now();
-  const thresholds = { 'all': 0, '1h': 3600000, '6h': 21600000, '24h': 86400000, '3d': 259200000 };
+  const thresholds = { 'all': 0, '1h': 3600000, '6h': 21600000, '24h': 86400000, '10d': 864000000 };
   const minAge = thresholds[val] || 0;
 
   document.querySelectorAll('#variant-list tr[data-id]').forEach(tr => {
@@ -337,24 +357,94 @@ document.getElementById('age-filter').addEventListener('change', (e) => {
   });
 });
 
+function showProgress(done, total, label) {
+  const wrap = document.getElementById('progress-wrap');
+  const bar = document.getElementById('progress-bar');
+  const countEl = document.getElementById('progress-count');
+  const labelEl = document.getElementById('progress-label');
+  wrap.classList.add('active');
+  labelEl.textContent = label;
+  countEl.textContent = done + ' / ' + total;
+  bar.style.width = total > 0 ? Math.round((done / total) * 100) + '%' : '0%';
+  bar.classList.remove('error');
+}
+
+function logProgressItem(msg, isError) {
+  const items = document.getElementById('progress-items');
+  const el = document.createElement('div');
+  el.textContent = (isError ? '✗ ' : '✓ ') + msg;
+  el.style.color = isError ? '#e74c3c' : '#27ae60';
+  items.appendChild(el);
+  items.scrollTop = items.scrollHeight;
+}
+
+function hideProgress() {
+  const wrap = document.getElementById('progress-wrap');
+  wrap.classList.remove('active');
+  document.getElementById('progress-items').innerHTML = '';
+  document.getElementById('progress-bar').style.width = '0%';
+}
+
 async function deleteIds(ids) {
   if (!ensureSecret()) return;
-  showStatus('Deleting ' + ids.length + ' variant(s)...', 'info');
-  try {
-    const res = await fetch(API_URL + '?secret=' + encodeURIComponent(SECRET) + '&action=delete&ids=' + ids.join(','));
-    const data = await res.json();
-    if (data.deleted > 0) {
-      showStatus('Deleted ' + data.deleted + ' variant(s).' + (data.errors?.length ? ' Errors: ' + data.errors.join(', ') : ''), 'success');
-      ids.forEach(id => {
+  if (ids.length === 0) return;
+
+  // Disable all action buttons during deletion
+  const buttons = document.querySelectorAll('.btn');
+  buttons.forEach(b => b.disabled = true);
+
+  let deleted = 0;
+  let failed = 0;
+  const failedIds = [];
+
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    const optionVal = document.querySelector('tr[data-id="' + id + '"] td:nth-child(3)')?.textContent || id;
+    showProgress(i, ids.length, 'Deleting ' + (i + 1) + ' of ' + ids.length + '…');
+    try {
+      const res = await fetch(API_URL + '?secret=' + encodeURIComponent(SECRET) + '&action=delete&ids=' + id);
+      const data = await res.json();
+      if (data.deleted > 0) {
+        deleted++;
+        logProgressItem(optionVal + ' deleted', false);
         const row = document.querySelector('tr[data-id="' + id + '"]');
         if (row) row.remove();
-      });
-    } else {
-      showStatus('No variants deleted. ' + (data.error || ''), 'error');
+      } else {
+        failed++;
+        failedIds.push(id);
+        logProgressItem(optionVal + ' — ' + (data.errors?.[0] || 'failed'), true);
+      }
+    } catch (err) {
+      failed++;
+      failedIds.push(id);
+      logProgressItem(id + ' — ' + err.message, true);
     }
-  } catch (err) {
-    showStatus('Error: ' + err.message, 'error');
   }
+
+  // Final state
+  showProgress(ids.length, ids.length, deleted + ' deleted' + (failed > 0 ? ', ' + failed + ' failed' : ' — done!'));
+  document.getElementById('progress-bar').classList.toggle('error', deleted === 0 && failed > 0);
+
+  // Re-enable buttons
+  buttons.forEach(b => b.disabled = false);
+  updateSelectedCount();
+
+  if (deleted > 0) {
+    showStatus('Deleted ' + deleted + ' variant(s).' + (failed > 0 ? ' ' + failed + ' failed.' : ''), 'success');
+    setTimeout(() => hideProgress(), 3000);
+  } else {
+    showStatus('No variants deleted.' + (failed > 0 ? ' ' + failed + ' failed.' : ''), 'error');
+  }
+
+  // Update stats
+  const totalEl = document.querySelector('.stat-card:nth-child(1) .num');
+  const ccEl = document.querySelector('.stat-card:nth-child(2) .num');
+  const slotsEl = document.querySelector('.stat-card:nth-child(4) .num');
+  const remaining = document.querySelectorAll('#variant-list tr[data-id]').length;
+  const protectedCount = document.querySelectorAll('#variant-list tr.protected').length;
+  if (totalEl) totalEl.textContent = remaining + protectedCount;
+  if (ccEl) ccEl.textContent = remaining;
+  if (slotsEl) slotsEl.textContent = 100 - (remaining + protectedCount);
 }
 
 document.querySelectorAll('.delete-one').forEach(btn => {
@@ -419,14 +509,20 @@ document.getElementById('upload-img-btn').addEventListener('click', async () => 
 
 document.getElementById('run-cron').addEventListener('click', async () => {
   if (!ensureSecret()) return;
-  showStatus('Running 3-day cleanup...', 'info');
+  const btn = document.getElementById('run-cron');
+  btn.disabled = true;
+  btn.textContent = 'Running…';
+  showStatus('Running 10-day cleanup — this may take a moment…', 'info');
   try {
     const res = await fetch(API_URL + '?secret=' + encodeURIComponent(SECRET) + '&action=cron');
     const data = await res.json();
     showStatus('Cleanup done: ' + data.deleted + ' deleted, ' + data.kept + ' kept.', 'success');
-    if (data.deleted > 0) setTimeout(() => location.reload(), 1500);
+    if (data.deleted > 0) setTimeout(() => location.reload(), 2000);
   } catch (err) {
     showStatus('Error: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run 10-Day Cleanup';
   }
 });
 </script>
@@ -441,11 +537,15 @@ document.getElementById('run-cron').addEventListener('click', async () => {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'OPTIONS') return res.status(200).end();
 
+    const userAgent = String(req.headers['user-agent'] || '');
+    const isVercelCron = userAgent.includes('vercel-cron/1.0');
+
     // Auth: the management UI is viewable without auth (it's behind a Vercel deployment URL).
     // Destructive actions (delete, cron, upload) require ?secret= or Bearer CRON_SECRET.
     const authHeader = req.headers.authorization || '';
     const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
-    const action = typeof req.query.action === 'string' ? req.query.action : '';
+    const requestedAction = typeof req.query.action === 'string' ? req.query.action : '';
+    const action = requestedAction || (isVercelCron ? 'cron' : '');
     const isDestructive = action && action !== 'ui';
 
     if (isDestructive && CRON_SECRET) {
@@ -472,7 +572,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Action: show management UI (default for browser GET)
         if (!action || action === 'ui') {
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
-            return res.status(200).send(renderManagementUI(variants, productId, querySecret));
+            return res.status(200).send(renderManagementUI(variants, productId, querySecret || CRON_SECRET));
         }
 
         // Action: delete specific variant IDs
@@ -501,9 +601,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json({ success: true, deleted, errors: errors.length > 0 ? errors : undefined });
         }
 
-        // Action: cron cleanup (delete CC-* variants older than 3 days)
+        // Action: cron cleanup (delete CC-* variants older than 10 days)
         if (action === 'cron' || action === 'cleanup') {
-            const cutoff = Date.now() - THREE_DAYS_MS;
+            const cutoff = Date.now() - TEN_DAYS_MS;
             let deleted = 0;
             let kept = 0;
             const errors: string[] = [];

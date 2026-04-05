@@ -4,7 +4,7 @@
     "crons": [
         {
             "path": "/api/cleanup-variants",
-            "schedule": "0 0 */3 * *"
+            "schedule": "0 0 */10 * *"
         }
     ],
     "headers": [
@@ -52,6 +52,10 @@
             ]
         }
     ],
+    "functions": {
+        "api/add-to-cart.ts": { "maxDuration": 30 },
+        "api/variant-image.ts": { "maxDuration": 25 }
+    },
     "rewrites": [
         {
             "source": "/chase-cover-configurator.iife.js",

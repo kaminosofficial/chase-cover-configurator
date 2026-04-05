@@ -34,13 +34,9 @@ export function mkMat(
 }
 
 const GAUGE_THICKNESS: Record<number, number> = {
-  10: 0.1345,
-  12: 0.1046,
-  14: 0.0747,
-  16: 0.0598,
-  18: 0.0478,
-  20: 0.0359,
   24: 0.0239,
+  22: 0.0299,
+  20: 0.0359,
 };
 
 function getCollarConfig(id: HoleId, config: ConfigState): CollarState {
@@ -437,7 +433,7 @@ export function buildCoverWithoutCollars(grp: THREE.Group, config: ConfigState) 
   const W = config.w * SC;
   const L = config.l * SC;
   const skH = config.sk * SC;
-  const T = (GAUGE_THICKNESS[config.gauge] || 0.0478) * SC;
+  const T = (GAUGE_THICKNESS[config.gauge] || 0.0239) * SC;
   const SLOPE = config.diag ? getDiagonalSlopeRise(W, L) : 0;
 
   const mat = mkMat(config.mat, config.pc, config.pcCol);
@@ -523,7 +519,7 @@ export function buildCollarForHole(
   const W = config.w * SC;
   const L = config.l * SC;
   const skH = config.sk * SC;
-  const T = (GAUGE_THICKNESS[config.gauge] || 0.0478) * SC;
+  const T = (GAUGE_THICKNESS[config.gauge] || 0.0239) * SC;
   const SLOPE = config.diag ? getDiagonalSlopeRise(W, L) : 0;
   const localRoofY = config.diag ? SLOPE * (1 - Math.max(Math.abs(hole.wx / (W / 2)), Math.abs(hole.wz / (L / 2)))) : 0;
   const topY = skH + localRoofY + hole.h;

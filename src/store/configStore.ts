@@ -25,7 +25,7 @@ export interface ConfigState {
   drip: boolean;
   diag: boolean;
   mat: 'galvanized' | 'stainless' | 'copper';
-  gauge: 10 | 12 | 14 | 16 | 18 | 20 | 24;
+  gauge: 20 | 22 | 24;
   pc: boolean;
   pcCol: string;
   holes: 0 | 1 | 2 | 3;
@@ -57,10 +57,17 @@ const defaultCollar: CollarState = {
 
 type StoreData = Omit<ConfigState, 'set' | 'setCollar' | 'setOrbitEnabled' | 'setMoveHolesMode'>;
 
+function normalizeGauge(value: unknown): 20 | 22 | 24 {
+  const numericGauge = Number(value);
+  if (numericGauge === 20) return 20;
+  if (numericGauge === 22) return 22;
+  return 24;
+}
+
 function computePrice(s: Partial<StoreData>): number {
   const w = s.w ?? 24, l = s.l ?? 36, sk = s.sk ?? 3;
   const holes = s.holes ?? 0, pc = s.pc ?? false;
-  const gauge = s.gauge ?? 24, mat = s.mat ?? 'galvanized';
+  const gauge = normalizeGauge(s.gauge), mat = s.mat ?? 'galvanized';
 
   // Storm collar cost: one collar per hole where stormCollar is enabled
   let stormCollarCost = 0;
@@ -132,8 +139,11 @@ export const useConfigStore = create<ConfigState>()(
   (set) => ({
     ...initial,
     set: (partial) => set(state => {
-      const next = { ...state, ...partial };
-      return { ...partial, price: computePrice(next) };
+      const sanitized = partial.gauge === undefined
+        ? partial
+        : { ...partial, gauge: normalizeGauge(partial.gauge) };
+      const next = { ...state, ...sanitized };
+      return { ...sanitized, price: computePrice(next) };
     }),
     setCollar: (id, partial) => set(state => {
       const key = `collar${id}` as 'collarA' | 'collarB' | 'collarC';

@@ -1,16 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchPricingFromPublicSheet, getStormCollarPrice } from '../lib/pricing-sheet.js';
+import { getShopifyAccessToken, SHOPIFY_STORE } from '../lib/shopify-auth.js';
 import { getHoleEdgeOffsets, holeWorld } from '../src/utils/geometry.js';
 import { computePricingBreakdown } from '../src/utils/pricing.js';
 
-const SHOPIFY_STORE = (process.env.SHOPIFY_STORE || '').trim();
-const SHOPIFY_ACCESS_TOKEN = (process.env.SHOPIFY_ACCESS_TOKEN || '').trim() || undefined;
-const SHOPIFY_CLIENT_ID = (process.env.SHOPIFY_CLIENT_ID || '').trim() || undefined;
-const SHOPIFY_CLIENT_SECRET = (process.env.SHOPIFY_CLIENT_SECRET || '').trim() || undefined;
 const GOOGLE_SHEET_ID = (process.env.GOOGLE_SHEET_ID || '').trim();
 const SHOPIFY_PRODUCT_ID = (process.env.SHOPIFY_PRODUCT_ID || '').trim() || undefined;
 const SHOPIFY_VARIANT_ID = (process.env.SHOPIFY_VARIANT_ID || '').trim() || undefined;
-const SHOPIFY_TOKEN_URL = `https://${SHOPIFY_STORE}/admin/oauth/access_token`;
 
 interface CollarConfig {
     shape?: 'round' | 'rect';
@@ -56,7 +52,14 @@ function getHoleCutoutValue(id: 'A' | 'B' | 'C', config: OrderConfig): string {
         : id === 'B'
             ? config.holeCutoutB
             : config.holeCutoutC;
-    if (cachedValue) return cachedValue;
+    if (cachedValue) {
+        return cachedValue
+            .replace(/[\[\]]/g, '')
+            .replace(/[A-C]\d\((Top|Right|Bottom|Left)\):/g, '$1:')
+            .replace(/\s{2,}/g, ' ')
+            .replace(/\s+\|/g, ' |')
+            .trim();
+    }
 
     const state = {
         ...config,
@@ -75,12 +78,10 @@ function getHoleCutoutValue(id: 'A' | 'B' | 'C', config: OrderConfig): string {
 
     const hole = holeWorld(id, state);
     const offsets = getHoleEdgeOffsets(hole, state);
-    return `${id}1(Top): ${formatFrac(offsets.top)}\" | ${id}2(Right): ${formatFrac(offsets.right)}\" | ${id}3(Bottom): ${formatFrac(offsets.bottom)}\" | ${id}4(Left): ${formatFrac(offsets.left)}\"`;
+    return `Top: ${formatFrac(offsets.top)}\" | Right: ${formatFrac(offsets.right)}\" | Bottom: ${formatFrac(offsets.bottom)}\" | Left: ${formatFrac(offsets.left)}\"`;
 }
 
 // In-memory cache for the Shopify Admin API token
-let shopifyTokenCache: { token: string; expiresAt: number } | null = null;
-
 function wait(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -95,97 +96,6 @@ function applyShopifyCatalogFallbacks(config: OrderConfig) {
         config.shopifyProductId = SHOPIFY_PRODUCT_ID;
         console.log('[DEBUG] Using env SHOPIFY_PRODUCT_ID:', SHOPIFY_PRODUCT_ID);
     }
-}
-
-async function getShopifyAccessToken() {
-    console.log('[AUTH] Starting auth flow...');
-    console.log('[AUTH] SHOPIFY_STORE:', SHOPIFY_STORE || '(not set)');
-    console.log('[AUTH] SHOPIFY_ACCESS_TOKEN:', SHOPIFY_ACCESS_TOKEN ? `set (${SHOPIFY_ACCESS_TOKEN.substring(0, 8)}...)` : '(not set)');
-    console.log('[AUTH] SHOPIFY_CLIENT_ID:', SHOPIFY_CLIENT_ID ? `set (${SHOPIFY_CLIENT_ID.substring(0, 8)}...)` : '(not set)');
-    console.log('[AUTH] SHOPIFY_CLIENT_SECRET:', SHOPIFY_CLIENT_SECRET ? `set (${SHOPIFY_CLIENT_SECRET.substring(0, 8)}...)` : '(not set)');
-
-    // 1. Prefer static token if provided
-    if (SHOPIFY_ACCESS_TOKEN) {
-        console.log('[AUTH] Using static SHOPIFY_ACCESS_TOKEN');
-        return SHOPIFY_ACCESS_TOKEN;
-    }
-
-    // 2. Fallback to dynamic token from cache
-    if (shopifyTokenCache && shopifyTokenCache.expiresAt > Date.now() + 5 * 60 * 1000) {
-        console.log('[AUTH] Using cached token (expires at', new Date(shopifyTokenCache.expiresAt).toISOString(), ')');
-        return shopifyTokenCache.token;
-    }
-
-    // 3. Generate dynamic token via OAuth client_credentials
-    if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) {
-        throw new Error('Missing Shopify Credentials. Please provide SHOPIFY_ACCESS_TOKEN or CLIENT_ID/SECRET.');
-    }
-
-    console.log('[AUTH] Attempting client_credentials grant to', SHOPIFY_TOKEN_URL);
-
-    const tokenBody = new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: SHOPIFY_CLIENT_ID,
-        client_secret: SHOPIFY_CLIENT_SECRET,
-    });
-
-    let lastStatus = 0;
-    let lastText = '';
-
-    for (let attempt = 1; attempt <= 2; attempt++) {
-        console.log(`[AUTH] Token request attempt ${attempt}/2`);
-        const res = await fetch(SHOPIFY_TOKEN_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: tokenBody.toString(),
-        });
-
-        console.log(`[AUTH] Response status: ${res.status}`);
-
-        if (res.ok) {
-            const data = await res.json();
-            const expiresIn = data.expires_in || 3600;
-            console.log('[AUTH] Token obtained successfully, expires in', expiresIn, 'seconds');
-
-            shopifyTokenCache = {
-                token: data.access_token,
-                expiresAt: Date.now() + expiresIn * 1000
-            };
-
-            return data.access_token;
-        }
-
-        lastStatus = res.status;
-        lastText = await res.text();
-        console.error(`[AUTH] Token request failed (attempt ${attempt}):`, lastStatus, lastText);
-
-        if (attempt < 2 && [502, 503, 504].includes(res.status)) {
-            await wait(500 * attempt);
-            continue;
-        }
-
-        break;
-    }
-
-    console.error('[AUTH] All token attempts failed. Last error:', lastStatus, lastText);
-
-    if (lastText.includes('shop_not_permitted')) {
-        throw new Error(
-            'Failed to generate Shopify access token: Shopify rejected client_credentials for this shop. ' +
-            'Confirm the app was created in the Dev Dashboard, released with the required Admin API scopes, ' +
-            'and installed on this exact store under the same organization that owns the app.'
-        );
-    }
-
-    if (lastText.includes('application_cannot_be_found')) {
-        throw new Error(
-            'Failed to generate Shopify access token: Shopify cannot find an app with this client_id. ' +
-            'The SHOPIFY_CLIENT_ID may be incorrect or the app may have been deleted. ' +
-            'Check your Shopify Partners Dashboard for the correct credentials.'
-        );
-    }
-
-    throw new Error(`Failed to generate Shopify access token: ${lastStatus} ${lastText}`);
 }
 
 async function fetchPricingFromSheet() {

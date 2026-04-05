@@ -63,11 +63,13 @@ export function getConfigState(config: Partial<ConfigState>): string {
 export function applyConfigState(base64: string): Partial<ConfigState> {
   try {
     const s = JSON.parse(atob(base64));
+    const numericGauge = Number(s.gauge);
+    const gauge = numericGauge === 20 ? 20 : numericGauge === 22 ? 22 : 24;
     const partial: Partial<ConfigState> = {
       w: parseFloat(s.w) || 24, l: parseFloat(s.l) || 36, sk: parseFloat(s.sk) || 3,
       drip: !!s.drip, diag: !!s.diag, holes: s.holes || 0,
       mat: s.mat || 'galvanized', pc: !!s.pc, pcCol: s.pcCol || '#101010',
-      gauge: s.gauge || 24,
+      gauge,
     };
     if (s.cA) partial.collarA = { shape: s.cA.sh === 'rect' ? 'rect' : 'round', dia: parseFloat(s.cA.d), rectWidth: parseFloat(s.cA.rw) || parseFloat(s.cA.d), rectLength: parseFloat(s.cA.rl) || parseFloat(s.cA.d), height: parseFloat(s.cA.h), centered: !!s.cA.c, offset1: parseFloat(s.cA.a1) || 0, offset2: parseFloat(s.cA.a2) || 0, offset3: parseFloat(s.cA.a3) || 0, offset4: parseFloat(s.cA.a4) || 0, stormCollar: s.cA.sh === 'rect' ? false : !!s.cA.sc };
     if (s.cB) partial.collarB = { shape: s.cB.sh === 'rect' ? 'rect' : 'round', dia: parseFloat(s.cB.d), rectWidth: parseFloat(s.cB.rw) || parseFloat(s.cB.d), rectLength: parseFloat(s.cB.rl) || parseFloat(s.cB.d), height: parseFloat(s.cB.h), centered: !!s.cB.c, offset1: parseFloat(s.cB.b1) || 0, offset2: parseFloat(s.cB.b2) || 0, offset3: parseFloat(s.cB.b3) || 0, offset4: parseFloat(s.cB.b4) || 0, stormCollar: s.cB.sh === 'rect' ? false : !!s.cB.sc };
