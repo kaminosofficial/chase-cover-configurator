@@ -114,6 +114,25 @@ import cssText from './styles/globals-scoped.css?inline';
         (mount.style as CSSStyleDeclaration).alignSelf = 'center';
     }
 
+    const originalInlineHeight = mount.style.height;
+    const applyResponsiveMountHeight = () => {
+        const isDesktop = window.innerWidth >= 768;
+        if (isDesktop) {
+            const desktopHeight = Math.max(640, Math.round(window.innerHeight * 0.8));
+            mount!.style.height = `${desktopHeight}px`;
+            mount!.style.minHeight = `${desktopHeight}px`;
+        } else {
+            mount!.style.height = originalInlineHeight || '100%';
+            mount!.style.minHeight = '';
+        }
+    };
+
+    applyResponsiveMountHeight();
+    window.addEventListener('resize', applyResponsiveMountHeight);
+    window.addEventListener('load', applyResponsiveMountHeight);
+    window.setTimeout(applyResponsiveMountHeight, 250);
+    window.setTimeout(applyResponsiveMountHeight, 1000);
+
     // 4. Attach Shadow DOM for complete style isolation
     const shadow = mount.attachShadow({ mode: 'open' });
 

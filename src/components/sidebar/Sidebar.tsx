@@ -10,15 +10,11 @@ import { PriceDisplay } from './PriceDisplay';
 import { CartRow } from './CartRow';
 import { NotesField } from './NotesField';
 import { useConfigStore } from '../../store/configStore';
-import { PRICING, getStormCollarPrice } from '../../config/pricing';
 import { InfoTooltip } from './InfoTooltip';
-import { computePricingBreakdown } from '../../utils/pricing.js';
 
 interface SidebarProps {
   descExpanded: boolean;
   setDescExpanded: (v: boolean) => void;
-  bdOpen: boolean;
-  setBdOpen: (v: boolean) => void;
   onOpenRal: () => void;
   onAddToCart: () => void;
   onBuyNow: () => void;
@@ -27,42 +23,12 @@ interface SidebarProps {
   submittingStep?: string;
 }
 
-function fmt(n: number) { return '$' + n.toFixed(2); }
-
-export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOpenRal, onAddToCart, onBuyNow, isSubmitting = false, submittingAction = null, submittingStep = '' }: SidebarProps) {
+export function Sidebar({ descExpanded, setDescExpanded, onOpenRal, onAddToCart, onBuyNow, isSubmitting = false, submittingAction = null, submittingStep = '' }: SidebarProps) {
   const config = useConfigStore(s => s);
   const holes = config.holes;
   const pc = config.pc;
 
   const [introExpanded, setIntroExpanded] = useState(false);
-
-  // Per-hole storm collar costs (only for holes with storm collar enabled)
-  const holeLabels = holes === 1
-    ? ['Hole 1']
-    : holes === 2
-      ? ['Hole 1', 'Hole 2']
-      : ['Hole 1', 'Hole 2', 'Hole 3'];
-  const activeCollars = [config.collarA, config.collarB, config.collarC].slice(0, holes);
-  const scItems = activeCollars
-    .map((c, i) => ({ label: holeLabels[i], price: c.stormCollar && c.shape !== 'rect' ? getStormCollarPrice(c.dia) : 0 }))
-    .filter(item => item.price > 0);
-  const scTotal = scItems.reduce((sum, item) => sum + item.price, 0);
-  const breakdown = computePricingBreakdown(config, PRICING, scTotal);
-
-  const bdRows: { label: string; value: string; cls: string }[] = [
-    { label: `Base Price (${config.w}" x ${config.l}" x ${config.sk}" skirt)`, value: fmt(breakdown.basePrice), cls: 'bd-row' },
-    { label: `${holes} Flue Hole${holes !== 1 ? 's' : ''}`, value: fmt(breakdown.holesCost), cls: 'bd-row' },
-    ...scItems.map(item => ({
-      label: `Storm Collar - ${item.label}`,
-      value: fmt(item.price),
-      cls: 'bd-row',
-    })),
-    ...(breakdown.skirtCost ? [{ label: 'Oversized Skirt Surcharge', value: fmt(breakdown.skirtCost), cls: 'bd-row' }] : []),
-    { label: 'Subtotal', value: fmt(breakdown.rawCost), cls: 'bd-sub' },
-    ...(breakdown.materialFactor !== 1 ? [{ label: config.mat === 'copper' ? 'Copper' : 'Material Multiplier', value: 'x ' + breakdown.materialFactor.toFixed(2), cls: 'bd-row' }] : []),
-    ...(config.pc ? [{ label: 'Powder Coating', value: 'x ' + breakdown.paintedMultiplier.toFixed(2), cls: 'bd-row' }] : []),
-    { label: 'TOTAL', value: fmt(breakdown.total), cls: 'bd-total' },
-  ];
 
   return (
     <div className="sidebar">
@@ -177,23 +143,7 @@ export function Sidebar({ descExpanded, setDescExpanded, bdOpen, setBdOpen, onOp
 
       <div className="price-bar">
         <div className="price-header">
-          <button
-            className={`bd-toggle${bdOpen ? ' open' : ''}`}
-            onClick={() => setBdOpen(!bdOpen)}
-            style={{ marginBottom: 0 }}
-          >
-            <span>{bdOpen ? '\u25BC' : '\u25B2'}</span> Price Breakdown
-          </button>
           <PriceDisplay />
-        </div>
-
-        <div className={`bd-panel${bdOpen ? ' open' : ''}`}>
-          {bdRows.map((row, i) => (
-            <div key={i} className={row.cls}>
-              <span>{row.label}</span>
-              <span>{row.value}</span>
-            </div>
-          ))}
         </div>
         <CartRow onAddToCart={onAddToCart} onBuyNow={onBuyNow} isSubmitting={isSubmitting} submittingAction={submittingAction} submittingStep={submittingStep} />
       </div>

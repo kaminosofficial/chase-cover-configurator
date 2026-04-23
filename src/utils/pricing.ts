@@ -25,20 +25,18 @@ export interface PricingInputLike {
 
 export interface PricingBreakdown {
   perimeter: number;
-  marginRate: number;
-  marginMultiplier: number;
-  basePriceBeforeMargin: number;
-  basePrice: number;
   holesCost: number;
   skirtCost: number;
   stormCollarCost: number;
-  rawCost: number;
-  gaugeFactor: number;
+  subtotalBeforeMultipliers: number;
   materialFactor: number;
-  prePaintCost: number;
   paintedMultiplier: number;
+  preGaugeCost: number;
+  gaugeFactor: number;
+  preMarginCost: number;
+  marginRate: number;
+  marginMultiplier: number;
   total: number;
-  paintedUpcharge: number;
 }
 
 export const DEFAULT_MODEL_COEFFICIENTS: Record<string, number> = {
@@ -210,7 +208,7 @@ export function normalizePaintedMultiplier(value: number): number {
 export function normalizeMarginRate(value: number): number {
   if (!Number.isFinite(value)) return 0;
   if (value < 0) return 0;
-  if (value > 2) return value / 100;
+  if (value > 10) return value / 100;
   return value;
 }
 
@@ -236,35 +234,33 @@ export function computePricingBreakdown(
 ): PricingBreakdown {
   const skirt = Number.isFinite(config.sk) ? Math.max(0, config.sk) : 0;
   const perimeter = (config.w + 2 * skirt) + (config.l + 2 * skirt);
-  const gaugeFactor = pricing.GAUGE_MULT[config.gauge] || 1;
-  const marginRate = pricing.MARGIN_RATE;
-  const marginMultiplier = 1 + marginRate;
-  const basePriceBeforeMargin = perimeter * gaugeFactor;
-  const basePrice = basePriceBeforeMargin * marginMultiplier;
   const holesCost = Math.max(0, config.holes || 0) * pricing.HOLE_PRICE;
   const skirtCost = skirt >= pricing.SKIRT_THRESHOLD ? pricing.SKIRT_SURCHARGE : 0;
-  const rawCost = basePrice + holesCost + skirtCost + stormCollarCost;
+  const subtotalBeforeMultipliers = perimeter + holesCost + skirtCost + stormCollarCost;
   const materialFactor = pricing.MATERIAL_MULT[config.mat] || 1;
-  const prePaintCost = rawCost * materialFactor;
   const paintedMultiplier = (config.pc && config.mat !== 'copper') ? pricing.PAINTED_MULTIPLIER : 1;
-  const total = prePaintCost * paintedMultiplier;
+  // Business rule: include every add-on first, then apply gauge, then Kaminos margin.
+  const preGaugeCost = subtotalBeforeMultipliers * materialFactor * paintedMultiplier;
+  const gaugeFactor = pricing.GAUGE_MULT[config.gauge] || 1;
+  const preMarginCost = preGaugeCost * gaugeFactor;
+  const marginRate = pricing.MARGIN_RATE;
+  const marginMultiplier = 1 + marginRate;
+  const total = preMarginCost * marginMultiplier;
 
   return {
     perimeter,
-    marginRate,
-    marginMultiplier,
-    basePriceBeforeMargin,
-    basePrice,
     holesCost,
     skirtCost,
     stormCollarCost,
-    rawCost,
-    gaugeFactor,
+    subtotalBeforeMultipliers,
     materialFactor,
-    prePaintCost,
     paintedMultiplier,
+    preGaugeCost,
+    gaugeFactor,
+    preMarginCost,
+    marginRate,
+    marginMultiplier,
     total,
-    paintedUpcharge: total - prePaintCost,
   };
 }
 

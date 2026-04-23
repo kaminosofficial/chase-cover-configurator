@@ -1025,16 +1025,56 @@ function waitForNextFrame() {
   });
 }
 
+async function waitForPromiseWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<{ resolved: boolean; value: T | null }> {
+  let timeoutId = 0;
+
+  try {
+    const result = await Promise.race([
+      promise.then((value) => ({ resolved: true as const, value })),
+      new Promise<{ resolved: false; value: null }>((resolve) => {
+        timeoutId = window.setTimeout(() => resolve({ resolved: false, value: null }), timeoutMs);
+      }),
+    ]);
+
+    return result;
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  }
+}
+
 async function captureCanvasScreenshot(
   appLayoutRef: React.RefObject<HTMLDivElement | null>,
-  options?: { resetView?: boolean }
+  options?: { resetView?: boolean; hideLabels?: boolean }
 ): Promise<string | undefined> {
+  const shouldHideLabels = options?.hideLabels ?? true;
+  const configStore = useConfigStore.getState();
+  const previousLabels = shouldHideLabels
+    ? {
+        showLabels: configStore.showLabels,
+        showLabelsA: configStore.showLabelsA,
+        showLabelsB: configStore.showLabelsB,
+        showLabelsC: configStore.showLabelsC,
+      }
+    : null;
+
   try {
+    if (previousLabels && (previousLabels.showLabels || previousLabels.showLabelsA || previousLabels.showLabelsB || previousLabels.showLabelsC)) {
+      configStore.set({
+        showLabels: false,
+        showLabelsA: false,
+        showLabelsB: false,
+        showLabelsC: false,
+      });
+      await waitForNextFrame();
+      await waitForNextFrame();
+    }
+
     if (options?.resetView) {
       cameraActions.reset();
       // Let OrbitControls and the canvas render settle before grabbing the image.
       await waitForNextFrame();
       await waitForNextFrame();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 60));
     }
 
     let canvasEl: HTMLCanvasElement | null = null;
@@ -1068,6 +1108,10 @@ async function captureCanvasScreenshot(
     return result;
   } catch {
     return undefined;
+  } finally {
+    if (previousLabels && (previousLabels.showLabels || previousLabels.showLabelsA || previousLabels.showLabelsB || previousLabels.showLabelsC)) {
+      configStore.set(previousLabels);
+    }
   }
 }
 
@@ -1568,7 +1612,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const [qrActive, setQrActive] = useState(false);
   const [arLoading, setArLoading] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
-  const [bdOpen, setBdOpen] = useState(false);
   const [ralOpen, setRalOpen] = useState(false);
   const [dimOpen, setDimOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1891,8 +1934,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
         <Sidebar
           descExpanded={descExpanded}
           setDescExpanded={setDescExpanded}
-          bdOpen={bdOpen}
-          setBdOpen={setBdOpen}
           onOpenRal={() => setRalOpen(true)}
           isSubmitting={isSubmitting}
           submittingAction={submittingAction}
@@ -1917,6 +1958,12 @@ export default function App({ productId, variantId }: AppProps = {}) {
               const t0 = performance.now();
 
               const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
+              const screenshotCaptureStartedAt = performance.now();
+              const screenshotBase64Promise = captureCanvasScreenshot(appLayoutRef, { resetView: true, hideLabels: true })
+                .then((image) => ({
+                  image,
+                  captureMs: Math.round(performance.now() - screenshotCaptureStartedAt),
+                }));
 
               const payload = {
                 w: config.w, l: config.l, sk: config.sk,
@@ -2010,6 +2057,63 @@ export default function App({ productId, variantId }: AppProps = {}) {
               setSubmittingStep('cart:adding');
               const t1 = performance.now();
 
+              if (data.variantId && !data.variantReused) {
+                imageUploadPromise = (async () => {
+                  const captureResult = await screenshotBase64Promise;
+                  const screenshotBase64 = captureResult.image;
+                  const captureMs = captureResult.captureMs;
+
+                  if (!screenshotBase64) {
+                    DEBUG() && console.warn('[IMG] Screenshot unavailable before cart open; skipping upload');
+                    emitCartDebug('image-capture-complete', {
+                      variantId: debugVariantId,
+                      captureMs,
+                      captured: false,
+                      dom: collectCartDomSnapshot(),
+                    });
+                    return null;
+                  }
+
+                  emitCartDebug('image-capture-complete', {
+                    variantId: debugVariantId,
+                    captureMs,
+                    captured: true,
+                    dom: collectCartDomSnapshot(),
+                  });
+
+                  const uploadStartedAt = performance.now();
+                  try {
+                    const imgRes = await fetch(`${apiBase}/api/variant-image`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        variantId: data.variantId,
+                        productId: resolvedShopifyIds.productId,
+                        image: screenshotBase64,
+                      }),
+                    });
+                    const uploadMs = Math.round(performance.now() - uploadStartedAt);
+                    if (!imgRes.ok) {
+                      console.warn(`[IMG] Upload failed before cart open: HTTP ${imgRes.status} (${uploadMs}ms)`);
+                      return null;
+                    }
+                    const imgData = await imgRes.json().catch(() => null);
+                    expectedImageUrl = imgData?.imageUrl ?? null;
+                    emitCartDebug('image-upload-complete', {
+                      variantId: debugVariantId,
+                      imageUrl: expectedImageUrl,
+                      captureMs,
+                      uploadMs,
+                      dom: collectCartDomSnapshot(),
+                    });
+                    return expectedImageUrl;
+                  } catch (e: any) {
+                    console.warn('[IMG] Upload error before cart open:', e?.message);
+                    return null;
+                  }
+                })();
+              }
+
               // Unified retry: cart add + price verification in one loop, one timeout budget
               const cartMaxWaitMs = getForegroundWaitBudgetMs('CART');
               const retryResult = await addToCartWithRetry({
@@ -2066,9 +2170,9 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
               // Check if image upload finished during the retry loop.
               // Give it a short extra window (up to 1s) if it's nearly done.
-              const imageUrl: string | null = null;
+              const imageReady = await waitForPromiseWithin(imageUploadPromise, 1200);
+              const imageUrl: string | null = imageReady.resolved ? imageReady.value : null;
               let seededImageSections: Record<string, string> | null = null;
-              DEBUG() && console.log('[IMG] Image capture is deferred until after the drawer opens');
               if (imageUrl && drawerSectionIds.length > 0) {
                 DEBUG() && console.log('[IMG] Image ready before drawer open â€” fetching fresh sections with image...');
                 try {
@@ -2082,7 +2186,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
                   }
                 } catch { /* ignore */ }
               } else if (!imageUrl) {
-                DEBUG() && console.log('[IMG] Upload still in progress â€” drawer will open without image; will refresh after');
+                DEBUG() && console.log('[IMG] Upload still in progress before drawer open â€” will refresh after if needed');
               }
 
               DEBUG() && console.log(`[CART] âœ“ TOTAL: ${Math.round(performance.now() - t0)}ms`);
@@ -2208,63 +2312,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 dom: collectCartDomSnapshot(),
               });
 
-              if (drawerOpened && data.variantId && !data.variantReused) {
-                imageUploadPromise = (async () => {
-                  const captureStartedAt = performance.now();
-                  const screenshotBase64 = await captureCanvasScreenshot(appLayoutRef);
-                  const captureMs = Math.round(performance.now() - captureStartedAt);
-
-                  if (!screenshotBase64) {
-                    DEBUG() && console.warn('[IMG] Screenshot unavailable after drawer open; skipping upload');
-                    emitCartDebug('image-capture-complete', {
-                      variantId: debugVariantId,
-                      captureMs,
-                      captured: false,
-                      dom: collectCartDomSnapshot(),
-                    });
-                    return null;
-                  }
-
-                  emitCartDebug('image-capture-complete', {
-                    variantId: debugVariantId,
-                    captureMs,
-                    captured: true,
-                    dom: collectCartDomSnapshot(),
-                  });
-
-                  const uploadStartedAt = performance.now();
-                  try {
-                    const imgRes = await fetch(`${apiBase}/api/variant-image`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        variantId: data.variantId,
-                        productId: resolvedShopifyIds.productId,
-                        image: screenshotBase64,
-                      }),
-                    });
-                    const uploadMs = Math.round(performance.now() - uploadStartedAt);
-                    if (!imgRes.ok) {
-                      console.warn(`[IMG] Upload failed after drawer open: HTTP ${imgRes.status} (${uploadMs}ms)`);
-                      return null;
-                    }
-                    const imgData = await imgRes.json().catch(() => null);
-                    expectedImageUrl = imgData?.imageUrl ?? null;
-                    emitCartDebug('image-upload-complete', {
-                      variantId: debugVariantId,
-                      imageUrl: expectedImageUrl,
-                      captureMs,
-                      uploadMs,
-                      dom: collectCartDomSnapshot(),
-                    });
-                    return expectedImageUrl;
-                  } catch (e: any) {
-                    console.warn('[IMG] Upload error after drawer open:', e?.message);
-                    return null;
-                  }
-                })();
-              }
-
               // 3d: If image upload was still pending when the drawer opened,
               // dispatch refresh events once it completes so the theme can update.
               if (!imageUrl && drawerOpened) {
@@ -2367,7 +2414,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
               const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
               DEBUG() && console.log('Resolved Shopify IDs for Buy Now:', resolvedShopifyIds);
 
-              const screenshotBase64Promise = captureCanvasScreenshot(appLayoutRef, { resetView: true });
+              const screenshotBase64Promise = captureCanvasScreenshot(appLayoutRef, { resetView: true, hideLabels: true });
 
               const payload = {
                 w: config.w, l: config.l, sk: config.sk,
@@ -2568,5 +2615,3 @@ export default function App({ productId, variantId }: AppProps = {}) {
     </>
   );
 }
-
-
