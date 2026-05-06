@@ -5,12 +5,14 @@
 Integrate the chase cover 3D configurator into a Shopify store so that:
 1. The configurator IIFE is hosted on Vercel (instant updates on git push / `vercel --prod`, no re-uploading to Shopify)
 2. Pricing constants are stored in a Google Sheet (editable without touching code)
-3. "Add to Cart" creates a Shopify Draft Order with the correct server-calculated price (tamper-proof)
-4. Customer is redirected to Shopify's native checkout
+3. **"Add to Cart"** creates (or reuses) a deterministic Shopify product variant at the server-calculated price and adds it to the native Shopify cart, opening the theme's cart drawer
+4. **"Buy with Shop"** does the same but clears the cart first and redirects to `/checkout`
 5. The standalone configurator is also accessible at the Vercel URL (for testing / direct access)
 6. If the customer presses Back from checkout, their configuration is automatically restored
 
 No iframe is used. The IIFE loads as a `<script>` tag directly on the Shopify page inside a Shadow DOM for CSS isolation.
+
+> **Primary cart flow is variant-based, not Draft Orders.** The legacy `POST /api/create-order` (Draft Order) endpoint still exists for backwards compatibility but is **not** used by the live cart UI. See the "Variant-Based Cart Flow" section below.
 
 ---
 
@@ -21,31 +23,45 @@ Shopify Product Page
   |
   +-- <chase-cover-configurator product-id="..." variant-id="...">
   |     Renders inside Shadow DOM (CSS isolated from Shopify theme)
+  |     Desktop mount height auto-set to max(640px, 80vh)
   |
   +-- <script src="https://chase-cover-configurator.vercel.app/chase-cover-configurator.iife.js">
         |
-        +-- On load: GET /api/pricing
+        +-- On load: GET /api/pricing  (retried up to 3× with backoff)
         |     -> Vercel serverless function
-        |     -> Fetches pricing from Google Sheets (cached 5 min)
+        |     -> Fetches pricing from Google Sheets (cached 5 min, falls back to defaults)
         |     -> Returns JSON pricing constants
         |
         +-- User configures cover -> price updates in real-time
         |
-        +-- "Add to Cart" -> POST /api/create-order
-              -> Vercel serverless function
-              -> Re-fetches pricing from Google Sheets (tamper-proof)
-              -> Recalculates price server-side
-              -> Authenticates with Shopify (static shpat_ token)
-              -> Uploads 3D screenshot to Shopify Files (requires write_files scope)
-              -> Creates Shopify Draft Order via Admin API (2025-10)
-              -> Returns checkout URL -> customer redirected
+        +-- "Add to cart" -> POST /api/add-to-cart
+        |     -> Vercel serverless function (lib/shopify-auth.ts)
+        |     -> Re-fetches pricing from Google Sheets (tamper-proof)
+        |     -> Recalculates price server-side
+        |     -> Generates deterministic FNV-1a hash from config + price
+        |     -> Reuses matching CC-* variant OR creates new variant via productVariantsBulkCreate
+        |     -> Returns { variantId, price, properties, variantReused, propagated }
+        |   |
+        |   +-- POST /api/variant-image (in parallel)
+        |   |     -> Uploads 3D screenshot to Shopify CDN
+        |   |     -> Attaches image to product + variant
+        |   |
+        |   +-- POST /cart/add.js (Shopify storefront, with retry + exponential backoff)
+        |         -> Adds variant to cart drawer
+        |         -> Theme drawer opens with correct price + image
+        |
+        +-- "Buy with shop" -> same flow + /cart/clear.js first, then redirect to /checkout
 
 Vercel Deployment (https://chase-cover-configurator.vercel.app)
   +-- /                                        Standalone SPA (for testing / direct access)
   +-- /chase-cover-configurator.iife.js        IIFE bundle loaded by Shopify
   +-- /chase-configurator.iife.js              Legacy filename alias (same file)
-  +-- /api/pricing                             Serverless: Google Sheets -> JSON
-  +-- /api/create-order                        Serverless: Config -> Shopify Draft Order
+  +-- /api/pricing                             Serverless: Google Sheets -> JSON (5min cache)
+  +-- /api/add-to-cart                         Serverless: Config -> Shopify variant (PRIMARY)
+  +-- /api/variant-image                       Serverless: Screenshot -> Shopify CDN
+  +-- /api/cleanup-variants                    Serverless: Cron + admin UI for variant cleanup
+  +-- /api/create-order                        Serverless: Draft Order (LEGACY, not used by UI)
+  +-- /api/cart-debug                          Serverless: Receives client debug telemetry
 ```
 
 ---
@@ -62,10 +78,14 @@ Vercel Deployment (https://chase-cover-configurator.vercel.app)
 2. Go to **Settings > Apps and sales channels > Develop apps**
 3. Click **"Create an app"** → name it e.g. "Chase Cover Configurator"
 4. Click **"Configure Admin API scopes"** → enable:
-   - `write_draft_orders`
-   - `read_draft_orders`
+   - `write_products` ← **required for variant creation/cleanup (primary cart flow)**
+   - `read_products`
+   - `write_inventory` ← **required to disable inventory tracking on new variants**
+   - `read_inventory`
    - `write_files` ← **required for cart image upload**
    - `read_files`
+   - `write_draft_orders` ← only if using legacy `/api/create-order`
+   - `read_draft_orders` ← only if using legacy `/api/create-order`
 5. Click **"Save"**, then click **"Install app"**
 6. Copy the **Admin API access token** (`shpat_...`) — it's shown **only once**, save it securely!
 7. Set this as `SHOPIFY_ACCESS_TOKEN` in Vercel environment variables
@@ -80,9 +100,11 @@ Vercel Deployment (https://chase-cover-configurator.vercel.app)
 3. The server will attempt a `client_credentials` grant on each order
 4. **This will fail** (`shop_not_permitted`) if the app org ≠ the store's org
 
-**Auth priority in `api/create-order.ts`**:
+**Auth priority** (shared by all API endpoints via `lib/shopify-auth.ts`):
 1. If `SHOPIFY_ACCESS_TOKEN` is set → use it (always preferred)
 2. Otherwise → attempt `client_credentials` via `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET`
+
+`lib/shopify-auth.ts` also trims env vars to strip trailing CRLF (a common copy/paste issue from Vercel's UI) and logs warnings for requests from unknown origins.
 
 ### 2. Google Sheet for Pricing Config
 
@@ -137,11 +159,13 @@ Set these in the **Vercel Dashboard** (Settings > Environment Variables) and in 
 | Variable | Required | Description | Example |
 |----------|----------|-------------|---------|
 | `GOOGLE_SHEET_ID` | Yes | Google Sheet ID (from the URL) | `1L9qAQbB-5dU...` |
-| `GOOGLE_SHEETS_API_KEY` | Yes | Google Cloud API key | `AIzaSyA48c...` |
+| `GOOGLE_SHEETS_API_KEY` | Optional | Google Cloud API key (only needed if using non-public Sheets read; current code uses the public gviz endpoint) | `AIzaSyA48c...` |
 | `SHOPIFY_STORE` | Yes | Shopify store `.myshopify.com` domain | `kaminos.myshopify.com` |
 | `SHOPIFY_ACCESS_TOKEN` | **Yes (Option A)** | Static Admin API token | `shpat_abc123...` |
 | `SHOPIFY_CLIENT_ID` | Option B only | Shopify App Client ID | `18e8d566e8...` |
 | `SHOPIFY_CLIENT_SECRET` | Option B only | Shopify App Client Secret | `shpss_e733...` |
+| `SHOPIFY_PRODUCT_ID` | Optional | Fallback product ID if the Liquid template doesn't pass `product-id` | `7983854...` |
+| `CRON_SECRET` | Yes (for cleanup) | Secret used to gate the variant-cleanup cron + admin UI | any opaque string |
 
 ### Setting via CLI
 
@@ -176,20 +200,25 @@ SHOPIFY_ACCESS_TOKEN=shpat_your_token_here
 chase-cover-configurator/
 ├── api/                              # Vercel serverless functions (auto-detected)
 │   ├── pricing.ts                    # GET /api/pricing
-│   └── create-order.ts              # POST /api/create-order
+│   ├── add-to-cart.ts                # POST /api/add-to-cart  (PRIMARY cart flow)
+│   ├── variant-image.ts              # POST /api/variant-image (3D screenshot upload)
+│   ├── cleanup-variants.ts           # GET /api/cleanup-variants (cron + admin UI)
+│   ├── create-order.ts               # POST /api/create-order  (LEGACY, not used by UI)
+│   └── cart-debug.ts                 # POST /api/cart-debug (client telemetry)
 ├── lib/
-│   └── pricing-sheet.ts             # Shared pricing fetch/parse logic
-├── vercel.json                       # Vercel config (build, CORS, rewrites)
+│   ├── pricing-sheet.ts              # Shared pricing fetch/parse logic + DEFAULT_PRICING fallback
+│   └── shopify-auth.ts               # Shared Shopify auth (token / OAuth) + origin validation
+├── vercel.json                       # Vercel config (build, CORS, function timeouts, cron)
 ├── src/
-│   ├── shopify-entry.tsx             # Shopify IIFE entry point (Shadow DOM)
+│   ├── shopify-entry.tsx             # Shopify IIFE entry point (Shadow DOM, responsive mount)
 │   ├── main.tsx                      # Standalone SPA entry point
-│   ├── store/configStore.ts         # Zustand store + saveConfigForRestore / restoreConfigIfNeeded
-│   ├── config/pricing.ts            # Client-side pricing (fetches from /api/pricing)
+│   ├── store/configStore.ts          # Zustand store + saveConfigForRestore / restoreConfigIfNeeded
+│   ├── config/pricing.ts             # Client-side pricing (fetches from /api/pricing, retry + isApiReachable)
 │   └── styles/
 │       ├── globals.css               # CSS source (edit this one!)
 │       └── globals-scoped.css        # Auto-synced from globals.css before Shopify build
 ├── scripts/
-│   └── sync-shopify-css.mjs         # Pre-build script: copies globals.css → globals-scoped.css
+│   └── sync-shopify-css.mjs          # Pre-build script: copies globals.css → globals-scoped.css
 ├── dist/                             # Vercel output dir (SPA + IIFE)
 └── dist-shopify/                     # Shopify IIFE build output
 ```
@@ -260,9 +289,9 @@ Add this to your Shopify product page template (Liquid):
 <script src="https://chase-cover-configurator.vercel.app/chase-cover-configurator.iife.js"></script>
 ```
 
-### With Product/Variant ID Linking
+### With Product/Variant ID Linking (recommended)
 
-To link Draft Orders to a Shopify product (so they appear properly in the catalog):
+The variant-based cart flow needs to know **which Shopify product** to create variants on. The cleanest way is to pass the IDs from Liquid:
 
 ```liquid
 <chase-cover-configurator
@@ -273,7 +302,9 @@ To link Draft Orders to a Shopify product (so they appear properly in the catalo
 <script src="https://chase-cover-configurator.vercel.app/chase-cover-configurator.iife.js"></script>
 ```
 
-When `variant-id` is provided, the Draft Order line item includes `variant_id`, linking it to that specific variant. If only `product-id` is provided, it uses `product_id` instead.
+`product-id` is required (or set `SHOPIFY_PRODUCT_ID` in Vercel as a fallback). `variant-id` is optional — it's a hint for the initial render only; the actual cart variant is the deterministic CC-* variant created/reused by `/api/add-to-cart`.
+
+If neither is supplied, `App.tsx` runs `resolveRuntimeShopifyIds()` which scans the page DOM for product IDs in common Shopify theme structures.
 
 ### Alternative Mount Point
 
@@ -290,13 +321,14 @@ If you can't use a custom element, use a div with a specific ID:
 2. Injects Google Fonts (`DM Sans`, `JetBrains Mono`) into `<head>`
 3. Injects QRious library (for QR codes) into `<head>`
 4. Finds `<chase-cover-configurator>`, `<chase-configurator>`, `#chase-cover-configurator-mount`, or `#chase-configurator-mount`
-5. Attaches a **Shadow DOM** to the mount element
-6. Injects scoped CSS (`globals-scoped.css`) into the shadow root
-7. Creates a light-DOM container (`#chase-cover-configurator-portal`) for AR/QR overlays + injects portal CSS
-8. Detects the API base URL from the script's own `src` attribute
-9. Reads `product-id` and `variant-id` attributes
-10. Fetches pricing from `/api/pricing`
-11. Renders the React app into the shadow root
+5. **Sets a responsive mount height** — on desktop (≥768px) overrides the inline `height` to `max(640px, 80vh)`. Re-applies on `resize`, `load`, and again at +250ms / +1000ms to handle themes that reflow late. Mobile keeps the original `height` attribute.
+6. Attaches a **Shadow DOM** to the mount element
+7. Injects scoped CSS (`globals-scoped.css`) into the shadow root
+8. Creates a light-DOM container (`#chase-cover-configurator-portal`) for AR/QR overlays + injects portal CSS
+9. Detects the API base URL from the script's own `src` attribute
+10. Reads `product-id` and `variant-id` attributes
+11. Fetches pricing from `/api/pricing` (retried up to 3× on cold-start failures, tracked via `isApiReachable()`)
+12. Renders the React app into the shadow root
 
 ---
 
@@ -306,92 +338,74 @@ If you can't use a custom element, use a div with a specific ID:
 
 Returns current pricing constants from the Google Sheet.
 
-**Response** (200):
-```json
-{
-  "AREA_RATE": 0.025,
-  "LINEAR_RATE": 0.445,
-  "BASE_FIXED": 178.03,
-  "HOLE_PRICE": 25,
-  "POWDER_COAT": 45,
-  "SKIRT_SURCHARGE": 75,
-  "SKIRT_THRESHOLD": 6,
-  "GAUGE_MULT": { "24": 1, "20": 1.3, "18": 1.4, "16": 1.6, "14": 1.8, "12": 2.7, "10": 3.4 },
-  "MATERIAL_MULT": { "galvanized": 1, "copper": 3 },
-  "STORM_COLLAR_PRICES": {}
-}
-```
+**Response** (200): JSON with the keys defined in `lib/pricing-sheet.ts` — `EXT_ANCHOR`, `EXT_S_W`, `EXT_S_L`, `EXT_S_AREA`, `MARGIN_RATE`, `HOLE_PRICE`, `SKIRT_SURCHARGE`, `SKIRT_THRESHOLD`, `PAINTED_MULTIPLIER`, `GAUGE_MULT`, `MATERIAL_MULT`, `MODEL_COEFFICIENTS`, `STORM_COLLAR_PRICES`.
 
 **Caching**: Server-side in-memory cache (5 min TTL) + HTTP `Cache-Control: public, max-age=60, s-maxage=300`.
 
-### `POST /api/create-order`
+**Fallback**: If Google Sheets is unreachable, returns hardcoded `DEFAULT_PRICING` from `lib/pricing-sheet.ts` and logs a server-side warning. The configurator keeps working with default prices.
 
-Creates a Shopify Draft Order from a configuration.
+### `POST /api/add-to-cart` (PRIMARY cart flow)
 
-**Request body**:
-```json
-{
-  "w": 48,
-  "l": 60,
-  "sk": 3,
-  "drip": true,
-  "diag": true,
-  "mat": "galvanized",
-  "gauge": 24,
-  "pc": false,
-  "pcCol": "#0B0E0F",
-  "holes": 2,
-  "collarA": {
-    "shape": "round",
-    "dia": 10,
-    "height": 3,
-    "centered": true,
-    "offset1": 0, "offset2": 0, "offset3": 0, "offset4": 0,
-    "stormCollar": false
-  },
-  "collarB": {
-    "shape": "rect",
-    "dia": 8,
-    "rectWidth": 8,
-    "rectLength": 8,
-    "height": 2,
-    "centered": false,
-    "offset1": 10, "offset2": 12, "offset3": 10, "offset4": 12,
-    "stormCollar": false
-  },
-  "collarC": null,
-  "quantity": 1,
-  "notes": "",
-  "shopifyProductId": "123456789",
-  "shopifyVariantId": "987654321",
-  "image": "data:image/png;base64,..."
-}
-```
+Re-fetches pricing server-side, computes the price, and creates (or reuses) a deterministic Shopify product variant. Does **not** touch the Shopify cart — the client adds the returned `variantId` to `/cart/add.js` itself.
+
+**Max duration**: 30s (configured in `vercel.json`).
+
+**Request body**: full configuration JSON (`w`, `l`, `sk`, `drip`, `diag`, `mat`, `gauge`, `pc`, `pcCol`, `holes`, `collarA/B/C`, `quantity`, `notes`, `shopifyProductId`, `shopifyVariantId`).
 
 **Response** (200):
 ```json
 {
-  "checkout_url": "https://your-store.myshopify.com/..."
+  "variantId": "gid://shopify/ProductVariant/12345...",
+  "variantReused": false,
+  "propagated": true,
+  "price": 612.45,
+  "properties": { /* line item properties Shopify will store */ },
+  "_timing": { /* server-side timing breakdown */ }
 }
 ```
 
-**Error responses**:
-- `400`: Missing required fields
-- `405`: Method not POST
-- `500`: Internal error (auth failure, etc.)
-- `502`: Shopify API error (includes `shopifyStatus` and `details`)
+Variant naming: `CC-XXXXXXXX` (deterministic 8-char FNV-1a hex from config + price). Identical config + price = same hash = variant reused (no propagation delay).
+
+### `POST /api/variant-image`
+
+Uploads the 3D screenshot and attaches it to the variant + product.
+
+**Max duration**: 25s (configured in `vercel.json`).
+
+**Request body**: `{ variantId, productId, image }` — `image` is a base64 data URL.
+
+**Response** (200): `{ imageUrl }` (Shopify CDN URL).
+
+**Errors**:
+- `413` if decoded image > ~500KB (server-side cap to prevent OOM)
+- Requires the `write_files` scope on the Shopify app
+
+### `GET /api/cleanup-variants`
+
+- **Cron**: runs every 3 days at midnight UTC (configured in `vercel.json`); deletes CC-* variants older than 3 days
+- **Manual UI**: open in a browser with `?secret=<CRON_SECRET>` for the management dashboard
+- Auth: `CRON_SECRET` env var, passed as query param or `Bearer` header. Falls back to OAuth `client_credentials` if `SHOPIFY_ACCESS_TOKEN` isn't set.
+
+### `POST /api/cart-debug`
+
+Receives client-side telemetry (cart attempts, retries, drawer events, image upload status). Logged to Vercel function logs. Useful when reproducing customer issues.
+
+### `POST /api/create-order` (LEGACY — Draft Order flow, not used by the live UI)
+
+Still functional, kept for backwards compatibility with older integrations that hit it directly. Creates a Shopify Draft Order from a configuration and returns a `checkout_url`. Uses shared auth from `lib/shopify-auth.ts`. **The live cart UI does not call this endpoint** — it uses the variant flow above.
 
 ---
 
 ## How Orders Appear in Shopify Admin
 
-Each Draft Order will show:
+Each cart/checkout that ships from this flow lands as a normal Shopify order against a **CC-* variant** of the configured product. The order line item shows:
 
 ### Line Item
-- **Title**: "Custom Chase Cover"
-- **Price**: Server-calculated price (tamper-proof, re-fetched from Google Sheets)
-- **Quantity**: As selected by user
-- **Linked product/variant**: If `product-id` / `variant-id` were provided
+- **Title**: the configured product's title (e.g. "Custom Chase Cover")
+- **Variant**: `CC-XXXXXXXX` (the deterministic hash; reused for identical configs)
+- **Price**: server-calculated price (tamper-proof, re-fetched from Google Sheets)
+- **Image**: 3D screenshot uploaded via `/api/variant-image` (requires `write_files` scope)
+- **Quantity**: as selected by user
 
 ### Line Item Properties
 
@@ -401,7 +415,7 @@ Properties are combined into fewer lines for readability:
 Dimensions:        60" L × 48" W × 3" Skirt
 Material & Gauge:  Galvanized — 24ga
 Options:           Drip Edge: Yes · Diagonal Crease: Yes
-Powder Coat:       Ruby Red (#940604)
+Powder Coat:       Ruby Red (RAL 3002)
 Holes:             2
 H1 (Left):         Round ⌀10" — Collar 3" tall
 H1 Position:       Centered on cover
@@ -409,10 +423,9 @@ H2 (Right):        Rectangle 8" × 8" — Collar 2" tall
 H2 Offsets:        Top: 5" · Right: 12" · Bottom: 5" · Left: 12"
 Special Notes:     Customer note here
 _config_json:      { …full JSON config… }
-_preview_image:    https://cdn.shopify.com/…
 ```
 
-> Properties starting with `_` are hidden from customers in the checkout UI.
+> Properties starting with `_` are hidden from customers in the checkout UI. Powder coat now shows the human-readable RAL name + code (e.g. `Ruby Red (RAL 3002)`) instead of the raw hex value — the server does the hex→RAL lookup before creating/reusing the variant.
 
 ### Hole Position Labels
 
@@ -439,11 +452,15 @@ Preview: https://cdn.shopify.com/…
 
 ## Cart Image (3D Screenshot)
 
-When "Add to Cart" is clicked, the app:
-1. Captures the 3D canvas as a PNG using `canvas.toDataURL()`
-2. Sends it as a `base64` field in the `POST /api/create-order` request
-3. The server uploads it to Shopify Files via GraphQL staged uploads
-4. The resulting CDN URL is included as a hidden `_preview_image` property and in the order note
+When "Add to cart" is clicked, the app:
+1. Captures the 3D canvas as a JPEG (white background composite) via `captureCanvasScreenshot()` — dimension labels are temporarily hidden during capture so the thumbnail is clean
+2. As soon as the variant ID returns from `/api/add-to-cart`, fires `POST /api/variant-image` in parallel with the cart-add retry loop
+3. The server (a) uploads the image via `stagedUploadsCreate` GraphQL → HTTP `PUT` binary → REST POST to attach to product + variant
+4. Returns `{ imageUrl }` (Shopify CDN URL); the variant now displays the image in the cart drawer and checkout
+
+The flow waits up to 1.2s for the upload before opening the cart drawer (so the first render can include the image). If the upload is still in flight, the drawer opens without the image and the theme is notified via cart events when the image is ready.
+
+For **Buy with Shop**, the image upload is `await`ed before the redirect — mobile browsers cancel in-flight requests on navigation, so we ensure it lands first.
 
 ### Requirements for Image Upload
 
@@ -451,7 +468,9 @@ The Shopify app **must have** these scopes:
 - `write_files`
 - `read_files`
 
-If these scopes are missing, the upload fails silently (the order is still created; the image is just omitted).
+The server enforces a **~500KB decoded image cap** (returns 413 if exceeded) to prevent OOM on Vercel's serverless functions.
+
+If `write_files` is missing, the upload fails silently — the cart line item is still created with the correct price/properties, just without the image.
 
 ### Adding `write_files` Scope
 
@@ -474,11 +493,11 @@ If these scopes are missing, the upload fails silently (the order is still creat
 
 ### Server-Side (tamper-proof, for actual orders)
 
-1. When "Add to Cart" is clicked, `POST /api/create-order` is called
-2. The server re-fetches pricing directly from Google Sheets API (not from client-supplied values)
-3. Price is recalculated server-side using the same formula
-4. The Draft Order is created with the **server-calculated price**
-5. Even if someone tampers with client-side data, the order price is always correct
+1. When "Add to cart" is clicked, `POST /api/add-to-cart` is called
+2. The server re-fetches pricing directly from Google Sheets (not from client-supplied values)
+3. Price is recalculated server-side via `computePricingBreakdown()` (shared with the client in `src/utils/pricing.ts`)
+4. A deterministic FNV-1a hash is generated from the snapped config + price, and the variant is created/reused at the **server-calculated price**
+5. Even if someone tampers with client-side data, the variant price (and therefore the cart price) is always correct
 
 ### Updating Prices
 
@@ -492,9 +511,9 @@ No code changes or redeployment needed.
 
 ## Session Config Restore (Back-from-Cart)
 
-When the user clicks "Add to Cart":
-1. The full configuration is saved to `sessionStorage` under key `chase-cover-restore`
-2. The user is redirected to the Shopify checkout URL
+When the user clicks "Add to cart" or "Buy with shop":
+1. The full configuration is saved to `sessionStorage` under key `chase-cover-restore` **before** the cart-add request fires (so even if the user closes the drawer or hits back from checkout, the config can be restored)
+2. For Buy Now: the user is redirected to the Shopify checkout URL after the variant + cart are ready
 
 When the page loads:
 - If `chase-cover-restore` exists in `sessionStorage` → config is restored and the key is **immediately deleted**
@@ -502,7 +521,8 @@ When the page loads:
 
 **Effect**:
 - Press Back from checkout → config restored ✅
-- Manually refresh the page → default config loads ✅ (key was either never set or already cleared)
+- Close the cart drawer and navigate away → config restored on the next visit ✅
+- Manually refresh the page (after the key was cleared on first restore) → default config loads ✅
 
 ---
 
@@ -528,7 +548,15 @@ The IIFE couldn't detect its own script URL. Make sure the `<script>` tag `src` 
 ### Price shows $0 or incorrect value
 - Check browser console for pricing fetch errors
 - Verify `GET /api/pricing` returns valid JSON
-- Check that Google Sheet is shared as "Viewer" and API key is valid
+- Check that Google Sheet is shared as "Viewer"
+- If pricing failed silently on cold start, the HTTP/2 connection pool to Vercel may be poisoned. The client retries `loadPricingFromAPI()` 3× with backoff and warms the connection before Add to Cart — but if you see `Failed to fetch` instantly on the first cart attempt, that's the cause
+
+### Cart drawer briefly shows $0 price (then refreshes)
+- This is a Shopify variant-propagation timing issue. The client polls `/cart.js` for the specific variant's price and only opens the drawer once it returns non-zero. Sections that contain `$0` are rejected and re-fetched.
+- If you see persistent $0, check `/api/cart-debug` logs in Vercel for the variant ID and confirm the variant was created with the right price.
+
+### Cart drawer closes instantly after opening
+- Caused by something replacing the drawer's `innerHTML` while it's open — destroys event listeners and scroll lock. The configurator avoids this (applies sections **before** opening; only dispatches events afterwards). If you see this, your theme/another script is interfering.
 
 ### "Add to Cart" fails with `shop_not_permitted`
 - You are using `client_credentials` OAuth for a cross-organization store
@@ -538,10 +566,15 @@ The IIFE couldn't detect its own script URL. Make sure the `<script>` tag `src` 
 - `SHOPIFY_CLIENT_ID` is incorrect or the app was deleted
 - **Fix**: Use `SHOPIFY_ACCESS_TOKEN` from a Store Admin custom app instead
 
+### "Add to Cart" fails with `Variant limit reached` / 422 on variant creation
+- Shopify Basic plan caps a product at 100 variants
+- The cleanup endpoint runs on cron every 3 days, and proactive cleanup runs at 95+; emergency cleanup runs on 422
+- Trigger a manual cleanup via `https://chase-cover-configurator.vercel.app/api/cleanup-variants?secret=<CRON_SECRET>`
+
 ### "Add to Cart" fails with other error
 - Check Vercel function logs: `vercel logs` or Vercel Dashboard > Deployments > Functions
-- Verify all required env vars are set
-- Ensure the Shopify app has `write_draft_orders` scope
+- Verify all required env vars are set (no trailing CRLF — `lib/shopify-auth.ts` trims them but UI-pasted values can still surprise you)
+- Ensure the Shopify app has `write_products`, `write_inventory`, and `write_files` scopes (and `write_draft_orders` only if you also use the legacy endpoint)
 
 ### Configurator doesn't render on Shopify
 - Verify the IIFE URL returns JavaScript (not 404)
@@ -576,37 +609,39 @@ The IIFE couldn't detect its own script URL. Make sure the `<script>` tag `src` 
 
 ### Initial Setup
 1. [ ] Google Sheet is set up with pricing values and shared as "Viewer"
-2. [ ] Vercel env vars are set: `GOOGLE_SHEET_ID`, `GOOGLE_SHEETS_API_KEY`, `SHOPIFY_STORE`, `SHOPIFY_ACCESS_TOKEN`
-3. [ ] `npx vercel --prod` deploys successfully
+2. [ ] Vercel env vars are set: `GOOGLE_SHEET_ID`, `SHOPIFY_STORE`, `SHOPIFY_ACCESS_TOKEN`, `CRON_SECRET`
+3. [ ] Shopify app has scopes: `write_products`, `read_products`, `write_inventory`, `read_inventory`, `write_files`, `read_files`
+4. [ ] `npx vercel --prod` deploys successfully
 
 ### Vercel URLs
-4. [ ] `https://chase-cover-configurator.vercel.app/` shows the standalone configurator
-5. [ ] `/chase-cover-configurator.iife.js` returns the JS bundle
-6. [ ] `/api/pricing` returns JSON with pricing constants
+5. [ ] `https://chase-cover-configurator.vercel.app/` shows the standalone configurator
+6. [ ] `/chase-cover-configurator.iife.js` returns the JS bundle
+7. [ ] `/api/pricing` returns JSON with pricing constants
 
 ### Shopify Integration
-7. [ ] Shopify product page loads the configurator without CSS conflicts
-8. [ ] Price updates in real-time as user changes options
-9. [ ] "Add to Cart" creates a Draft Order and redirects to Shopify checkout
-10. [ ] Checkout shows correct price (matches configurator display)
-11. [ ] Order appears in Shopify Admin > Drafts with all configuration details
-12. [ ] Line item properties show combined format (Dimensions, Material & Gauge, Options, hole details)
+8. [ ] Shopify product page loads the configurator without CSS conflicts
+9. [ ] Desktop mount fills `max(640px, 80vh)` of the viewport
+10. [ ] Price updates in real-time as user changes options
+11. [ ] "Add to cart" opens the theme's cart drawer with the correct price (no $0 flash)
+12. [ ] Cart line item shows combined properties (Dimensions, Material & Gauge, Options, hole details, RAL name + code for powder coat)
 13. [ ] Hole position labels show Left/Middle/Right correctly
-14. [ ] Product/variant linking works (order linked to product in catalog)
+14. [ ] "Buy with shop" clears the cart and redirects to `/checkout`
+15. [ ] Identical configurations reuse the same `CC-*` variant (no duplicate creates)
 
 ### Material & Config Behavior
-15. [ ] Switching to Copper always shows copper color in 3D model
-16. [ ] Enabling powder coat → switching to copper → switching back to galvanized restores powder coat color
-17. [ ] Powder coat is not charged when material is copper
-18. [ ] Rectangular hole shows "Rectangle W" × H"" in order, not "Round ⌀"
+16. [ ] Switching to Copper always shows copper color in 3D model
+17. [ ] Enabling powder coat → switching to copper → switching back to galvanized restores powder coat color
+18. [ ] Powder coat is not charged when material is copper
+19. [ ] Rectangular hole shows "Rectangle W" × H"" in order, not "Round ⌀"
 
 ### Session & Navigation
-19. [ ] Pressing Back from checkout restores configuration
-20. [ ] Manually refreshing the page loads defaults (not saved session)
+20. [ ] Pressing Back from checkout (Buy Now flow) restores configuration
+21. [ ] Manually refreshing the page loads defaults (not saved session)
 
 ### Features
-21. [ ] Changing a value in Google Sheet updates displayed pricing within 5 minutes
-22. [ ] AR QR code appears on desktop, AR placement works on mobile (direct launch)
-23. [ ] PDF download generates a valid specification worksheet
-24. [ ] "Move Holes" drag mode works — holes can be repositioned in 3D viewport
-25. [ ] Cart image shows 3D screenshot in Shopify checkout (requires `write_files` scope)
+22. [ ] Changing a value in Google Sheet updates displayed pricing within 5 minutes
+23. [ ] AR QR code appears on desktop, AR placement works on mobile (direct launch)
+24. [ ] PDF download generates a valid specification worksheet
+25. [ ] "Move Holes" drag mode works — holes can be repositioned in 3D viewport
+26. [ ] Cart image shows 3D screenshot in Shopify cart drawer + checkout (requires `write_files` scope)
+27. [ ] Variant cleanup admin UI loads at `/api/cleanup-variants?secret=<CRON_SECRET>`

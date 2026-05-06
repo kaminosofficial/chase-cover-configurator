@@ -68,7 +68,7 @@ chase-cover-configurator/
 │   │   │   ├── ToggleRow.tsx            # Toggle switches (drip, diag, pc)
 │   │   │   ├── PowderCoatSection.tsx    # Color picker + RAL trigger
 │   │   │   ├── PriceDisplay.tsx         # Estimated price display
-│   │   │   ├── CartRow.tsx              # Quantity + Add to Cart + Buy Now + Download PDF
+│   │   │   ├── CartRow.tsx              # Dawn-style quantity selector + Add to Cart + Buy with Shop + Download PDF
 │   │   │   ├── NotesField.tsx           # Special notes textarea (200-word limit)
 │   │   │   └── InfoTooltip.tsx          # ⓘ hover tooltip component
 │   │   ├── pdf/
@@ -257,24 +257,24 @@ The IIFE detects its own origin by scanning `<script>` tags for one containing `
 
 ### Flow
 
-1. **Capture screenshot** of 3D canvas as JPEG with white background composite
+1. **Kick off screenshot capture** of 3D canvas (JPEG, white background composite). Labels (`showLabels`, `showLabelsA/B/C`) are temporarily hidden during capture and restored after, so the cart image is clean.
 2. **Call `POST /api/add-to-cart`** with config (no image — image uploaded separately)
-3. **Fire-and-forget image upload** via `POST /api/variant-image` in background
-4. **Unified cart retry** (`addToCartWithRetry()`):
+3. **Image upload (pre-drawer)**: As soon as the variant is created (and only when not reused), `POST /api/variant-image` is fired in parallel using the screenshot promise. The system waits up to 1.2s before opening the drawer to seed the image into the first section render.
+4. **Unified cart retry** (`addToCartWithRetry()` / shared `retryCartAdd()` helper used by both Add to Cart and Buy Now):
    - POST `/cart/add.js` with variant ID + sections
-   - If 422 "sold out" → variant not propagated yet, retry with backoff
-   - If 429 rate limit → retry with longer backoff (2s, 4s, 5s)
-   - If 200 OK → check price on specific variant: price > 0 = success, price = 0 = switch to price-wait phase
-   - Price-wait phase: poll `/cart.js` every 1.5s for non-zero price on our variant
+   - If 422 ("sold out" / variant not propagated) → retry with **exponential backoff + jitter** (~570ms, ~1.1s, ~2.3s; ~4s worst case vs prior 9s linear)
+   - If 429 rate limit → retry with longer backoff
+   - If 200 OK → check price on the specific variant via `findTargetCartItem(cartData, variantId)`: price > 0 = success, price = 0 = enter price-wait phase
+   - Price-wait phase: poll `/cart.js` for non-zero price on our variant (mobile timeouts: 8s for add, 10s for buy — networks slower for variant propagation)
    - One timeout budget (25s default, 30s on iPhone Safari)
-   - Propagation timeout → enters `continueCartPreparationUntilVerified()` (polls indefinitely until price confirmed)
+   - Propagation timeout → `continueCartPreparationUntilVerified()` polls in background until price confirmed; user is **never shown a "sold out" error** — friendly "try again" message only on real failure
 5. **Section readiness check** (`waitForUsableRenderedSections()`):
    - Fetches rendered cart drawer sections from Shopify
    - Rejects sections containing `$0` or `$0.00`
    - Tries seed sections first (bundled from cart/add response), then fresh fetches
-   - 6s initial timeout, 12s extended retry if initial fails
-6. **Apply sections & open drawer** — only when sections don't contain $0
-7. **Post-open image refresh**: If image upload finishes after drawer opens, fetches fresh sections to show the image
+6. **Apply sections, then open drawer** — sections are applied to the DOM **before** the drawer opens (not after). Once open, the drawer DOM is **never replaced via `innerHTML`** (that destroys event listeners, scroll lock, and open state). All subsequent updates dispatch cart events for the theme to react to.
+7. **Mobile drawer**: On mobile the drawer is lazy-loaded — DOM doesn't exist until opened. Flow is open-first, then apply section updates after a 300ms delay, then fetch a fresh `/cart.js` with sections and dispatch events.
+8. **Post-open image refresh**: If the image upload completes after the drawer opens, fresh sections are fetched and cart events are dispatched (no DOM replacement) so the theme can re-render with the image.
 
 ### Key Design Decisions
 
@@ -282,6 +282,9 @@ The IIFE detects its own origin by scanning `<script>` tags for one containing `
 - **Price check on specific variant**: Uses `findTargetCartItem(cartData, variantId)` to check OUR variant's price, not the overall cart total.
 - **No exact price text match**: Section validation only checks for `$0` presence, NOT for exact expected price text. This avoids false rejections when quantity > 1 (line total differs from unit price).
 - **429 is retryable**: Shopify's storefront rate limit is retried with backoff, never surfaced as error to user.
+- **Non-blocking drawer**: Drawer opens immediately after `/cart/add.js` returns 200 with non-zero price — price/image sync happens in the background after open. No more waiting on slow propagation before showing the cart.
+- **Drawer DOM preservation**: After the drawer is open, **never** call `applySectionUpdates()` (which replaces `innerHTML`) — only dispatch cart events. Replacing innerHTML caused the drawer to close instantly and broke scroll lock cleanup.
+- **Labels hidden during screenshot**: Dimension labels (A/B/C measurement arrows + side labels) are toggled off for the capture frame so the cart thumbnail isn't cluttered. State is restored in a `finally` block.
 
 ### Buy Now Flow
 
@@ -290,6 +293,10 @@ Same as Add to Cart but:
 2. 300ms pause after clear to avoid 429
 3. No sections needed (redirects to `/checkout` instead of opening drawer)
 4. Image upload is `await`ed before redirect (prevents mobile browser from cancelling in-flight request)
+
+### API Reachability & Connection Warm-Up
+
+`loadPricingFromAPI()` (in `src/config/pricing.ts`) retries up to **3× with backoff** on cold-start / network failure and tracks reachability via `isApiReachable()`. If pricing never loaded (poisoned HTTP/2 connection pool to Vercel), Add to Cart / Buy Now first **warm up the connection** before posting — this prevents instant `Failed to fetch` errors caused by a broken connection from a silent earlier failure.
 
 ---
 
@@ -358,10 +365,10 @@ Each configuration produces a deterministic hash using FNV-1a:
 
 ### Image Attachment
 
-- 3D canvas is captured as JPEG (white background composite) via `captureCanvasScreenshot()`
+- 3D canvas is captured as JPEG (white background composite) via `captureCanvasScreenshot()` with `hideLabels: true`
 - Uploaded to Shopify via `POST /api/variant-image` (separate from variant creation)
 - Attached to the variant so it appears in cart drawer and checkout
-- Upload is fire-and-forget for Add to Cart (drawer can open before image is ready)
+- For Add to Cart: capture begins immediately; upload starts as soon as the variant ID is known. The flow waits up to 1.2s for the upload before opening the drawer (so the first section render can include the image). If still pending, drawer opens and sections are refreshed via cart events when the upload completes.
 - Upload is `await`ed for Buy Now (prevents mobile browser from cancelling mid-flight)
 
 ---
@@ -592,11 +599,12 @@ On page mount, `restoreConfigIfNeeded()` is called:
   1. Patches iOS viewport (prevents zoom on input focus)
   2. Injects Google Fonts + QRious into document head
   3. Finds `<chase-cover-configurator>`, `<chase-configurator>`, `#chase-cover-configurator-mount`, or `#chase-configurator-mount`
-  4. Attaches Shadow DOM with `globals-scoped.css` injected as `<style>`
-  5. Creates a light-DOM portal container for AR/QR overlays with portal-scoped CSS in `<head>`
-  6. Detects API base URL from the script's own `src` attribute
-  7. Reads `product-id` and `variant-id` attributes from the mount element
-  8. Calls `loadPricingFromAPI(apiBase)` and renders `<App>` into shadow root
+  4. **Applies a responsive mount height** — desktop (≥768px) overrides the inline height to `max(640px, 80vh)` so the configurator fills more of the viewport on large screens; mobile keeps the original inline/`100%` height. Re-applies on `resize`, `load`, and at +250ms / +1000ms to handle Shopify themes that reflow late.
+  5. Attaches Shadow DOM with `globals-scoped.css` injected as `<style>`
+  6. Creates a light-DOM portal container for AR/QR overlays with portal-scoped CSS in `<head>`
+  7. Detects API base URL from the script's own `src` attribute
+  8. Reads `product-id` and `variant-id` attributes from the mount element
+  9. Calls `loadPricingFromAPI(apiBase)` and renders `<App>` into shadow root
 
 ### Legacy Web Component (`web-component.tsx`)
 - Not used in current production flow
@@ -614,6 +622,41 @@ On page mount, `restoreConfigIfNeeded()` is called:
 - **iPad** (768px+) intentionally gets the **desktop layout** (sidebar always visible)
 - Mobile: viewer height defaults to 40% of screen, adjustable by dragging the divider handle
 - Mobile: AR button is a round icon (bottom-left of viewport), not text
+- Shopify embed (desktop): mount element height is overridden to `max(640px, 80vh)` by `shopify-entry.tsx` so the configurator fills most of the viewport on Kaminos product pages
+
+---
+
+## Cart UI (CartRow, Sidebar)
+
+**File**: `src/components/sidebar/CartRow.tsx`
+
+The cart row sits at the bottom of the sidebar and matches the styling of Kaminos product pages (Dawn theme conventions).
+
+### Quantity Selector
+
+- Dawn-style: `Quantity` label on the left, then `−` / number input / `+` controls
+- Cap: `MAX_QTY = 10`
+- Input uses `font-size: 16px` on mobile to prevent iOS zoom on focus
+- Empty input is allowed during typing; commits the previous value if left empty
+
+### Add to Cart Button
+
+- Color: tan **`#C9A870`** with white **fill-from-bottom** hover animation; text color animates from white → tan on hover
+- Lowercase **"Add to cart"** label (matches Kaminos convention)
+- Heights: 46px desktop / 44px mobile
+- Font sizes: 16px desktop / 14px mobile
+- Disabled state palette matches the new tan scheme; loading states cycle through `Preparing... → Adding... → Finalizing... → Almost there...`
+
+### Buy with Shop Button
+
+- Color: Shopify purple **`#5a31f4`** with subtle opacity-darken hover (no fill animation)
+- Uses the **official Shop wordmark SVG** inlined from Shopify's shop-js CDN bundle (italic "shop" with bag-handle "o"). Embedded directly as React component (`ShopLogo`) so it renders inside the Shadow DOM. **No "Pay" wordmark** — just the Shop wordmark.
+- Same height/font sizing as Add to Cart for visual consistency
+- Loading states: `Preparing... → Preparing checkout... → Finalizing... → Almost there... → Off we go!`
+
+### Sidebar Price Section
+
+- The expandable **"Price Breakdown"** panel was **removed** in commit `7695a1c`. The sidebar now only renders `<PriceDisplay />` (estimated total) above the cart row. The shared `computePricingBreakdown()` is still used internally and on the server for variant pricing — it's just no longer surfaced as a UI accordion.
 
 ---
 
@@ -660,3 +703,13 @@ API handlers log warnings for requests from unknown origins via `warnUnknownOrig
 - **Variant limit**: Shopify Basic plan = 100 variants max. Do NOT raise above 100. Proactive cleanup runs at 95+, emergency cleanup on 422.
 - **Google Sheets fallback**: If Google Sheets is unreachable, pricing falls back to hardcoded defaults in `lib/pricing-sheet.ts`. The configurator keeps working rather than breaking.
 - **Image size limit**: Server rejects images > ~500KB to prevent OOM (413 response).
+- **Drawer DOM never replaced after open**: A previous bug closed the drawer instantly because `applySectionUpdates()` replaced `innerHTML` on an open drawer, destroying event listeners and scroll lock cleanup. Fix: apply sections **before** opening; once open, only dispatch cart events. Background price polling and post-image refresh dispatch events instead of replacing DOM.
+- **Drawer opens immediately on success**: Previously waited for full price/section verification before opening. Now the drawer opens as soon as `/cart/add.js` returns 200 with non-zero price; price/image sync continues in the background.
+- **Exponential backoff with jitter**: Cart add retries use `~570ms / ~1.1s / ~2.3s` exponential backoff (worst case ~4s) instead of the prior linear `1.5s / 3s / 4.5s` (worst case ~9s).
+- **No "sold out" error to user**: Variant propagation 422s are a Shopify timing issue, not real stock. User sees a friendly "try again" message only on real failure, never raw "sold out".
+- **RAL code in cart**: Cart line items show the human-readable RAL name + code (e.g. `Ruby Red (RAL 3002)`) instead of the hex value. Server does the hex → RAL lookup before creating/reusing the variant.
+- **Pricing API retry + connection warm-up**: `loadPricingFromAPI()` retries 3× with backoff and tracks reachability. If the initial pricing fetch silently failed, Add to Cart / Buy Now warm up the HTTP/2 connection to Vercel before posting — fixes "Failed to fetch" caused by a poisoned connection pool from a cold-start failure.
+- **Sidebar Price Breakdown removed**: The expandable breakdown accordion was removed from the sidebar; only `PriceDisplay` (estimated total) is shown above the cart row.
+- **Cart button styling**: Tan `#C9A870` Add to Cart with hover fill animation; purple `#5a31f4` Buy with Shop using the official Shop wordmark SVG (no "Pay"). Heights 46px desktop / 44px mobile, font 16px desktop / 14px mobile to match Kaminos product pages.
+- **Screenshot hides labels**: Dimension labels (A/B/C arrows + side labels) are temporarily toggled off during canvas capture so the cart thumbnail/preview is clean. State is restored in a `finally` block.
+- **Responsive mount height**: `shopify-entry.tsx` overrides the mount element height on desktop (≥768px) to `max(640px, 80vh)` so the configurator fills most of the viewport on Kaminos product pages.
