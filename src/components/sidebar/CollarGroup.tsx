@@ -24,20 +24,30 @@ function formatInputNumber(value: number): string {
   return Number(value.toFixed(3)).toString();
 }
 
+function InchesFieldLabel({ main, tooltip }: { main: string; tooltip?: string }) {
+  return (
+    <>
+      <span className="field-label-stack">
+        <span className="field-label-main">{main}</span>
+        <span className="unit">(in)</span>
+      </span>
+      {tooltip && <InfoTooltip text={tooltip} />}
+    </>
+  );
+}
+
 function CollarInput({
   label,
   value,
   min,
   max,
   onCommit,
-  tooltip,
 }: {
   label: ReactNode;
   value: number;
   min: number;
   max: number;
   onCommit: (v: number) => void;
-  tooltip?: string;
 }) {
   const [inputVal, setInputVal] = useState(formatInputNumber(value));
   const [focused, setFocused] = useState(false);
@@ -57,9 +67,8 @@ function CollarInput({
 
   return (
     <div className="field">
-      <label style={{ display: 'flex', alignItems: 'center' }}>
+      <label className="field-label-with-tooltip">
         {label}
-        {tooltip && <InfoTooltip text={tooltip} />}
       </label>
       <input
         type="number"
@@ -545,47 +554,42 @@ export function CollarGroup({ id, label }: Props) {
       {collar.shape === 'round' ? (
         <div className="field-row">
           <CollarInput
-            label="Diameter (in)"
+            label={<InchesFieldLabel main="Diameter" tooltip="Measure the outside diameter of the flue pipe or liner where it exits the chase top." />}
             value={collar.dia}
             min={MIN_SIZE}
             max={maxDiaInput}
             onCommit={handleDiaChange}
-            tooltip="Measure the outside diameter of the flue pipe or liner where it exits the chase top."
           />
           <CollarInput
-            label="Collar Height (in)"
+            label={<InchesFieldLabel main="Collar Height" tooltip="Height of the vertical collar sleeve above the cover surface." />}
             value={collar.height}
             min={1}
             max={52}
             onCommit={value => setCollar(id, { height: value })}
-            tooltip="Height of the vertical collar sleeve above the cover surface."
           />
         </div>
       ) : (
         <div className="hole-size-row-rect">
           <CollarInput
-            label="Length (in)"
+            label={<InchesFieldLabel main="Length" tooltip="Rectangular opening size along the cover length." />}
             value={collar.rectLength}
             min={MIN_SIZE}
             max={maxRectLengthInput}
             onCommit={value => handleRectAxisChange('rectLength', value)}
-            tooltip="Rectangular opening size along the cover length."
           />
           <CollarInput
-            label="Width (in)"
+            label={<InchesFieldLabel main="Width" tooltip="Rectangular opening size along the cover width." />}
             value={collar.rectWidth}
             min={MIN_SIZE}
             max={maxRectWidthInput}
             onCommit={value => handleRectAxisChange('rectWidth', value)}
-            tooltip="Rectangular opening size along the cover width."
           />
           <CollarInput
-            label="Collar Height (in)"
+            label={<InchesFieldLabel main="Collar Height" tooltip="Height of the rectangular collar sleeve above the cover surface." />}
             value={collar.height}
             min={1}
             max={52}
             onCommit={value => setCollar(id, { height: value })}
-            tooltip="Height of the rectangular collar sleeve above the cover surface."
           />
         </div>
       )}

@@ -57,8 +57,11 @@ function DimInput({ configKey, label, unit, max, step = 0.125, tooltip }: DimPro
 
   return (
     <div className="field">
-      <label>
-        {label} <span className="unit">({unit})</span>
+      <label className="field-label-with-tooltip">
+        <span className="field-label-stack">
+          <span className="field-label-main">{label}</span>
+          <span className="unit">({unit})</span>
+        </span>
         {tooltip && <InfoTooltip text={tooltip} />}
       </label>
       <input

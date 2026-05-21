@@ -249,6 +249,37 @@
 }
 .chase-cover-configurator-root .field input:focus-visible { border-color: rgba(18,18,18,0.08); box-shadow: none; }
 .chase-cover-configurator-root .field .unit { font-size: 12px; font-weight: 500; color: var(--text-helper); font-family: var(--mono); }
+.chase-cover-configurator-root .field-label-stack {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 4px;
+  row-gap: 0;
+  line-height: 1.25;
+  min-width: 0;
+}
+.chase-cover-configurator-root .field-label-stack .field-label-main {
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  line-height: 1.25;
+}
+.chase-cover-configurator-root .field-label-stack .unit {
+  display: inline;
+  margin-top: 0;
+  line-height: 1.2;
+}
+.chase-cover-configurator-root .field label.field-label-with-tooltip {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+.chase-cover-configurator-root .hole-size-row-rect .field label.field-label-with-tooltip,
+.chase-cover-configurator-root .collar-group > .field-row .field label.field-label-with-tooltip {
+  align-items: flex-start;
+}
 
 .chase-cover-configurator-root .field-row-3 { display: flex; gap: 12px; }
 .chase-cover-configurator-root .field-row-3 > .field { flex: 1; min-width: 0; }
@@ -349,8 +380,20 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 8px;
+  align-items: end;
 }
-.chase-cover-configurator-root .hole-size-row-rect > .field { min-width: 0; }
+.chase-cover-configurator-root .hole-size-row-rect > .field,
+.chase-cover-configurator-root .collar-group > .field-row > .field {
+  display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
+  min-width: 0;
+}
+.chase-cover-configurator-root .collar-group > .field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+}
 .chase-cover-configurator-root .centered-check-disabled {
   opacity: 0.65;
 }
@@ -785,15 +828,15 @@
   .chase-cover-configurator-root .section--powder .section-title { margin-bottom: 4px; }
   .chase-cover-configurator-root .section--powder .toggle-row { padding-top: 8px; }
   .chase-cover-configurator-root .collar-options-row { gap: 10px 14px; margin-bottom: 14px; }
-  .chase-cover-configurator-root .hole-size-row-rect { gap: 6px; }
+  .chase-cover-configurator-root .hole-size-row-rect { gap: 6px; align-items: end; }
   .chase-cover-configurator-root .hole-size-row-rect .field { min-width: 0; }
-  .chase-cover-configurator-root .hole-size-row-rect .field label {
+  .chase-cover-configurator-root .hole-size-row-rect .field label.field-label-with-tooltip,
+  .chase-cover-configurator-root .collar-group > .field-row .field label.field-label-with-tooltip {
     font-size: 13px;
     align-items: flex-start;
     line-height: 1.25;
-    min-height: 0;
-    white-space: normal;
   }
+  .chase-cover-configurator-root .collar-group > .field-row { align-items: end; }
   .chase-cover-configurator-root .hole-size-row-rect .field .info-tooltip-wrap { margin-left: 4px; }
   .chase-cover-configurator-root .hole-size-row-rect .field input[type="number"] { padding: 10px 8px; font-size: 13px; }
   .chase-cover-configurator-root .offset-grid .field { min-width: 0; }
@@ -1046,12 +1089,10 @@
   .chase-cover-configurator-root .collar-group > .field-row {
     gap: 10px;
   }
-  .chase-cover-configurator-root .collar-group > .field-row .field label,
-  .chase-cover-configurator-root .hole-size-row-rect .field label {
+  .chase-cover-configurator-root .collar-group > .field-row .field label.field-label-with-tooltip,
+  .chase-cover-configurator-root .hole-size-row-rect .field label.field-label-with-tooltip {
     align-items: flex-start;
     line-height: 1.25;
-    min-height: 2.8em;
-    white-space: normal;
   }
   .chase-cover-configurator-root .hole-size-row-rect {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1203,4 +1244,3 @@
 @media (prefers-reduced-motion: reduce) {
   .chase-cover-configurator-root *, .chase-cover-configurator-root *::before, .chase-cover-configurator-root *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
-

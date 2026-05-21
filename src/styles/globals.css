@@ -86,6 +86,48 @@ header {
 }
 .vp-btn:hover { background: var(--bg); color: var(--text); }
 
+@media (max-width: 767px) {
+  .viewport-controls .desktop-ar { display: none; }
+}
+
+.vp-btn svg { display: block; flex-shrink: 0; }
+.vp-btn.is-active {
+  background: var(--bg);
+  color: var(--accent);
+  border-color: var(--color-border-active);
+}
+.dim-overlay .dim-breakdown-test {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-family: var(--sans);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.dim-overlay .dim-breakdown-test .dim-test-note {
+  font-size: 9px;
+  color: var(--text-helper);
+  font-style: italic;
+  margin-bottom: 6px;
+}
+.dim-overlay .dim-bd-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--text-muted);
+}
+.dim-overlay .dim-bd-total {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+  color: var(--text);
+}
+
 .dim-overlay {
   position: absolute; top: 14px; right: 14px;
   font-family: var(--mono); font-size: 11px; color: #666;
@@ -249,6 +291,37 @@ header {
 }
 .field input:focus-visible { border-color: rgba(18,18,18,0.08); box-shadow: none; }
 .field .unit { font-size: 12px; font-weight: 500; color: var(--text-helper); font-family: var(--mono); }
+.field-label-stack {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 4px;
+  row-gap: 0;
+  line-height: 1.25;
+  min-width: 0;
+}
+.field-label-stack .field-label-main {
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  line-height: 1.25;
+}
+.field-label-stack .unit {
+  display: inline;
+  margin-top: 0;
+  line-height: 1.2;
+}
+.field label.field-label-with-tooltip {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+.hole-size-row-rect .field label.field-label-with-tooltip,
+.collar-group > .field-row .field label.field-label-with-tooltip {
+  align-items: flex-start;
+}
 
 .field-row-3 { display: flex; gap: 12px; }
 .field-row-3 > .field { flex: 1; min-width: 0; }
@@ -349,8 +422,20 @@ header {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 8px;
+  align-items: end;
 }
-.hole-size-row-rect > .field { min-width: 0; }
+.hole-size-row-rect > .field,
+.collar-group > .field-row > .field {
+  display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
+  min-width: 0;
+}
+.collar-group > .field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+}
 .centered-check-disabled {
   opacity: 0.65;
 }
@@ -785,15 +870,15 @@ header {
   .section--powder .section-title { margin-bottom: 4px; }
   .section--powder .toggle-row { padding-top: 8px; }
   .collar-options-row { gap: 10px 14px; margin-bottom: 14px; }
-  .hole-size-row-rect { gap: 6px; }
+  .hole-size-row-rect { gap: 6px; align-items: end; }
   .hole-size-row-rect .field { min-width: 0; }
-  .hole-size-row-rect .field label {
+  .hole-size-row-rect .field label.field-label-with-tooltip,
+  .collar-group > .field-row .field label.field-label-with-tooltip {
     font-size: 13px;
     align-items: flex-start;
     line-height: 1.25;
-    min-height: 0;
-    white-space: normal;
   }
+  .collar-group > .field-row { align-items: end; }
   .hole-size-row-rect .field .info-tooltip-wrap { margin-left: 4px; }
   .hole-size-row-rect .field input[type="number"] { padding: 10px 8px; font-size: 13px; }
   .offset-grid .field { min-width: 0; }
@@ -813,7 +898,7 @@ header {
     font-size: 10px;
     line-height: 1;
   }
-  .viewport-controls .viewport-primary-btn.desktop-ar { display: none; }
+  .viewport-controls .vp-btn.desktop-ar { display: none; }
   .ar-btn-mobile {
     width: 44px;
     height: 44px;
@@ -1018,18 +1103,10 @@ header {
     gap: 6px;
     max-width: calc(100% - 24px);
   }
-  .viewport-controls .vp-btn,
-  .viewport-controls .viewport-primary-btn,
-  .viewport-controls .viewport-action-btn {
+  .viewport-controls .vp-btn {
     min-height: 30px;
     height: 30px;
     border-radius: 6px;
-  }
-  .viewport-controls .viewport-primary-btn,
-  .viewport-controls .viewport-action-btn {
-    padding: 0 10px;
-    font-size: 11px;
-    line-height: 1;
   }
   .price-bar {
     padding: 14px 12px 12px;
@@ -1046,12 +1123,10 @@ header {
   .collar-group > .field-row {
     gap: 10px;
   }
-  .collar-group > .field-row .field label,
-  .hole-size-row-rect .field label {
+  .collar-group > .field-row .field label.field-label-with-tooltip,
+  .hole-size-row-rect .field label.field-label-with-tooltip {
     align-items: flex-start;
     line-height: 1.25;
-    min-height: 2.8em;
-    white-space: normal;
   }
   .hole-size-row-rect {
     grid-template-columns: repeat(2, minmax(0, 1fr));

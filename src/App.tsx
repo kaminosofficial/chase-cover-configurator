@@ -9,7 +9,8 @@ import { cameraActions } from './utils/cameraRef';
 import { RalModal } from './components/ral/RalModal';
 import { formatFrac } from './utils/format';
 import { getHoleSizeInches, getHoleEdgeOffsets, holeWorld } from './utils/geometry';
-import { isApiReachable, loadPricingFromAPI } from './config/pricing';
+import { getStormCollarPrice, isApiReachable, loadPricingFromAPI, PRICING } from './config/pricing';
+import { computePricingBreakdown } from './utils/pricing';
 
 declare global {
   interface Window { QRious: any; __chaseDebug?: boolean; }
@@ -125,6 +126,42 @@ function formatHoleSummary(code: 'A' | 'B' | 'C', index: number, collar: CollarS
     ? ' (on center)'
     : ` [${code}1: ${formatFrac(collar.offset3)}" ${code}2: ${formatFrac(collar.offset4)}" ${code}3: ${formatFrac(collar.offset1)}" ${code}4: ${formatFrac(collar.offset2)}"]`;
   return holeText + offsetText;
+}
+
+function computeStormCollarCost(config: ReturnType<typeof useConfigStore.getState>): number {
+  let stormCollarCost = 0;
+  const collars = [config.collarA, config.collarB, config.collarC];
+  for (let i = 0; i < config.holes; i++) {
+    const c = collars[i];
+    if (c?.stormCollar && c.shape !== 'rect') stormCollarCost += getStormCollarPrice(c.dia);
+  }
+  return stormCollarCost;
+}
+
+function IconMoveHoles() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v5M12 16v5" />
+      <path d="M3 12h5M16 12h5" />
+      <path d="m12 8-3-3 3 3" />
+      <path d="m12 16-3 3 3-3" />
+      <path d="m8 12-3-3 3 3" />
+      <path d="m16 12 3-3-3 3" />
+    </svg>
+  );
+}
+
+function IconAr({ size = 20 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 8 8 4.5h12L16 8z" />
+      <path d="M16 8 20 4.5v11L16 19z" />
+      <rect x="4" y="8" width="12" height="11" rx="1" />
+      <text x="10" y="16.3" fontSize="7.5" fontWeight="700" textAnchor="middle"
+        fill="currentColor" stroke="none" fontFamily="ui-sans-serif, system-ui, sans-serif">AR</text>
+    </svg>
+  );
 }
 
 function formatHoleCutoutSummary(code: 'A' | 'B' | 'C', config: ReturnType<typeof useConfigStore.getState>) {
@@ -1796,6 +1833,16 @@ export default function App({ productId, variantId }: AppProps = {}) {
     ...(config.holes === 3 ? [formatHoleSummary('C', 3, config.collarC)] : []),
   ];
 
+  const stormCollarCost = computeStormCollarCost(config);
+  const pricingBreakdown = computePricingBreakdown(
+    { w: config.w, l: config.l, sk: config.sk, holes: config.holes, gauge: config.gauge, pc: config.pc, mat: config.mat },
+    PRICING,
+    stormCollarCost,
+  );
+  const fmtUsd = (n: number) => `$${n.toFixed(2)}`;
+  const hasMaterialOrPaint =
+    pricingBreakdown.materialFactor !== 1 || pricingBreakdown.paintedMultiplier !== 1;
+
   return (
     <>
       <div
@@ -1818,41 +1865,38 @@ export default function App({ productId, variantId }: AppProps = {}) {
             </button>
             {config.holes > 0 && (
               <button
-                className={`viewport-primary-btn${config.moveHolesMode ? ' is-active' : ''}`}
-                title={config.moveHolesMode ? 'Done Moving Holes' : 'Move Holes'}
+                type="button"
+                className={`vp-btn${config.moveHolesMode ? ' is-active' : ''}`}
+                title={config.moveHolesMode ? 'Done moving holes' : 'Move holes'}
+                aria-label={config.moveHolesMode ? 'Done moving holes' : 'Move holes'}
+                aria-pressed={config.moveHolesMode}
                 disabled={isSubmitting}
-                aria-disabled={isSubmitting}
-                style={{
-                  width: 'auto',
-                  gap: '6px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  whiteSpace: 'nowrap',
-                  flexShrink: 0,
-                }}
                 onClick={() => setConfig({ moveHolesMode: !config.moveHolesMode })}
               >
-                <span>{config.moveHolesMode ? 'Done Moving' : 'Move Holes'}</span>
+                <IconMoveHoles />
               </button>
             )}
-            <button className="viewport-primary-btn desktop-ar viewport-action-btn" onClick={() => launchAR()}>View in AR</button>
+            <button
+              type="button"
+              className="vp-btn desktop-ar"
+              title="View in AR"
+              aria-label="View in AR"
+              onClick={() => launchAR()}
+            >
+              <IconAr size={20} />
+            </button>
           </div>
 
           <div className="mobile-only-controls" style={{ position: 'absolute', bottom: 14, left: 14, display: 'flex', gap: 8, zIndex: 5 }}>
             <button
+              type="button"
               className="viewport-primary-btn ar-btn-mobile"
               style={{ position: 'relative', bottom: 'auto', left: 'auto', transform: 'none', margin: 0 }}
               onClick={() => launchAR(true)}
               title="View in AR"
               aria-label="View in AR"
             >
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M3 7V4h3M17 4h3v3M3 17v3h3M17 20h3v-3"/>
-                <path d="M12 8l-4 2.3v4.4L12 17l4-2.3V10.3z"/>
-                <line x1="12" y1="17" x2="12" y2="12.5"/>
-                <line x1="8" y1="10.3" x2="12" y2="12.5"/>
-                <line x1="16" y1="10.3" x2="12" y2="12.5"/>
-              </svg>
+              <IconAr size={35} />
             </button>
           </div>
 
@@ -1870,6 +1914,47 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 {displayDimLines.map((line, i) => (
                   <div key={i}>{line}</div>
                 ))}
+                <div className="dim-breakdown-test">
+                  <div className="dim-test-note">Price breakdown (testing — disable later)</div>
+                  <div className="dim-bd-row">
+                    <span>Base (L+W+4&times;skirt)</span>
+                    <span>{fmtUsd(pricingBreakdown.baseGeometry)}</span>
+                  </div>
+                  <div className="dim-bd-row">
+                    <span>&times; Gauge ({pricingBreakdown.gaugeFactor})</span>
+                    <span>{fmtUsd(pricingBreakdown.baseAfterGauge)}</span>
+                  </div>
+                  {hasMaterialOrPaint && (
+                    <div className="dim-bd-row">
+                      <span>
+                        &times; Material ({pricingBreakdown.materialFactor})
+                        {pricingBreakdown.paintedMultiplier !== 1
+                          ? `, paint (${pricingBreakdown.paintedMultiplier})`
+                          : ''}
+                      </span>
+                      <span>{fmtUsd(pricingBreakdown.baseAfterMaterialPaint)}</span>
+                    </div>
+                  )}
+                  {pricingBreakdown.holesCost > 0 && (
+                    <div className="dim-bd-row"><span>Holes</span><span>{fmtUsd(pricingBreakdown.holesCost)}</span></div>
+                  )}
+                  {pricingBreakdown.skirtCost > 0 && (
+                    <div className="dim-bd-row"><span>Skirt surcharge</span><span>{fmtUsd(pricingBreakdown.skirtCost)}</span></div>
+                  )}
+                  {pricingBreakdown.stormCollarCost > 0 && (
+                    <div className="dim-bd-row"><span>Storm collars</span><span>{fmtUsd(pricingBreakdown.stormCollarCost)}</span></div>
+                  )}
+                  {pricingBreakdown.marginRate > 0 && (
+                    <div className="dim-bd-row"><span>Subtotal (pre-margin)</span><span>{fmtUsd(pricingBreakdown.subtotalBeforeMargin)}</span></div>
+                  )}
+                  {pricingBreakdown.marginRate > 0 && (
+                    <div className="dim-bd-row">
+                      <span>Kaminos margin ({(pricingBreakdown.marginRate * 100).toFixed(0)}%)</span>
+                      <span>{fmtUsd(pricingBreakdown.marginAmount)}</span>
+                    </div>
+                  )}
+                  <div className="dim-bd-total"><span>Total</span><span>{fmtUsd(pricingBreakdown.total)}</span></div>
+                </div>
               </>
             ) : (
               <button

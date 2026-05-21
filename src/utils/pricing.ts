@@ -24,18 +24,22 @@ export interface PricingInputLike {
 }
 
 export interface PricingBreakdown {
-  perimeter: number;
+  /** Raw panel geometry before material, paint, or gauge: L + W + 4×skirt (in-range sizes). */
+  baseGeometry: number;
+  basePrice: number;
   holesCost: number;
   skirtCost: number;
   stormCollarCost: number;
-  subtotalBeforeMultipliers: number;
+  extrasTotal: number;
   materialFactor: number;
   paintedMultiplier: number;
-  preGaugeCost: number;
+  baseAfterMaterialPaint: number;
   gaugeFactor: number;
-  preMarginCost: number;
+  baseAfterGauge: number;
+  subtotalBeforeMargin: number;
   marginRate: number;
   marginMultiplier: number;
+  marginAmount: number;
   total: number;
 }
 
@@ -140,65 +144,6 @@ export const DEFAULT_MATERIAL_MULT: Record<string, number> = {
   copper: 3.0,
 };
 
-const RANGE_KEYS = ['b2', 'b3', 'b4a', 'b4b', 'b5a', 'b5b', 'b6a', 'b6b'] as const;
-
-function clampNumber(value: number): number {
-  return Number.isFinite(value) ? value : 0;
-}
-
-function buildBaseFeatures(w: number, l: number) {
-  const W = clampNumber(w);
-  const L = clampNumber(l);
-  const D = Math.max(W, L);
-  const m = Math.min(W, L);
-  const area = W * L;
-  const perim = W + L;
-  const wingpos = Math.max(0, D - 52);
-  const whigh = W >= 42 ? 1 : 0;
-
-  const ranges = {
-    b2: L >= 42 && L <= 52,
-    b3: L >= 54 && L <= 55,
-    b4a: L >= 56 && L <= 63,
-    b4b: L >= 64 && L <= 73,
-    b5a: L >= 74 && L <= 83,
-    b5b: L >= 84 && L <= 95,
-    b6a: L === 96,
-    b6b: L >= 98 && L <= 100,
-  } as const;
-
-  const features: Record<string, number> = { bias: 1, area, perim, D, m, W, L, wingpos, whigh };
-
-  for (const key of RANGE_KEYS) {
-    const active = ranges[key] ? 1 : 0;
-    features[key] = active;
-    features[`area_${key}`] = area * active;
-    features[`perim_${key}`] = perim * active;
-    features[`D_${key}`] = D * active;
-    features[`m_${key}`] = m * active;
-    features[`W_${key}`] = W * active;
-    features[`L_${key}`] = L * active;
-    features[`wingpos_${key}`] = wingpos * active;
-    features[`whigh_${key}`] = whigh * active;
-  }
-
-  features.W_b1 = W * (L <= 40 ? 1 : 0);
-  features.bug_W46_L36 = W === 46 && L === 36 ? 1 : 0;
-  features.bug_W46_L38 = W === 46 && L === 38 ? 1 : 0;
-  features.bug_W30_L96 = W === 30 && L === 96 ? 1 : 0;
-  features.bug_W52_L32 = W === 52 && L === 32 ? 1 : 0;
-
-  return features;
-}
-
-function dotProduct(coefficients: Record<string, number>, features: Record<string, number>): number {
-  let total = 0;
-  for (const [key, value] of Object.entries(features)) {
-    if (coefficients[key] !== undefined) total += coefficients[key] * value;
-  }
-  return total;
-}
-
 export function normalizePaintedMultiplier(value: number): number {
   if (!Number.isFinite(value)) return 1.5;
   if (value > 2) return 1 + value / 100;
@@ -212,11 +157,23 @@ export function normalizeMarginRate(value: number): number {
   return value;
 }
 
-export function computeBasePanelPrice(w: number, l: number, pricing: PricingLike): number {
+/**
+ * Panel base price from cover dimensions (inches).
+ * In-range (W≤52, L≤100): L + W + 4×skirt — e.g. default 60+48+12 = $120.
+ * User wording L×(2×skirt)+W×(2×skirt) is read as both long sides (2×skirt each) added to L+W, not 2×skirt×(L+W).
+ * Oversized: sheet EXT_* anchor + width/length/area surcharges (regression coefficients unused).
+ */
+export function computeBasePanelPrice(
+  w: number,
+  l: number,
+  sk: number,
+  pricing: PricingLike
+): number {
   if (!Number.isFinite(w) || !Number.isFinite(l) || w <= 0 || l <= 0) return 0;
+  const skirt = Number.isFinite(sk) ? Math.max(0, sk) : 0;
 
   if (w <= 52 && l <= 100) {
-    return dotProduct(pricing.MODEL_COEFFICIENTS, buildBaseFeatures(w, l));
+    return l + w + 4 * skirt;
   }
 
   const extraWidth = Math.max(0, w - 52);
@@ -232,34 +189,39 @@ export function computePricingBreakdown(
   pricing: PricingLike,
   stormCollarCost = 0
 ): PricingBreakdown {
-  const skirt = Number.isFinite(config.sk) ? Math.max(0, config.sk) : 0;
-  const perimeter = (config.w + 2 * skirt) + (config.l + 2 * skirt);
   const holesCost = Math.max(0, config.holes || 0) * pricing.HOLE_PRICE;
+  const skirt = Number.isFinite(config.sk) ? Math.max(0, config.sk) : 0;
   const skirtCost = skirt >= pricing.SKIRT_THRESHOLD ? pricing.SKIRT_SURCHARGE : 0;
-  const subtotalBeforeMultipliers = perimeter + holesCost + skirtCost + stormCollarCost;
+  const extrasTotal = holesCost + skirtCost + stormCollarCost;
+  const baseGeometry = computeBasePanelPrice(config.w, config.l, skirt, pricing);
+  const basePrice = baseGeometry;
+  const gaugeFactor = pricing.GAUGE_MULT[config.gauge] || 1;
+  const baseAfterGauge = basePrice * gaugeFactor;
   const materialFactor = pricing.MATERIAL_MULT[config.mat] || 1;
   const paintedMultiplier = (config.pc && config.mat !== 'copper') ? pricing.PAINTED_MULTIPLIER : 1;
-  // Business rule: include every add-on first, then apply gauge, then Kaminos margin.
-  const preGaugeCost = subtotalBeforeMultipliers * materialFactor * paintedMultiplier;
-  const gaugeFactor = pricing.GAUGE_MULT[config.gauge] || 1;
-  const preMarginCost = preGaugeCost * gaugeFactor;
-  const marginRate = pricing.MARGIN_RATE;
+  const baseAfterMaterialPaint = baseAfterGauge * materialFactor * paintedMultiplier;
+  const subtotalBeforeMargin = baseAfterMaterialPaint + extrasTotal;
+  const marginRate = normalizeMarginRate(pricing.MARGIN_RATE);
   const marginMultiplier = 1 + marginRate;
-  const total = preMarginCost * marginMultiplier;
+  const marginAmount = subtotalBeforeMargin * marginRate;
+  const total = subtotalBeforeMargin * marginMultiplier;
 
   return {
-    perimeter,
+    baseGeometry,
+    basePrice,
     holesCost,
     skirtCost,
     stormCollarCost,
-    subtotalBeforeMultipliers,
+    extrasTotal,
     materialFactor,
     paintedMultiplier,
-    preGaugeCost,
+    baseAfterMaterialPaint,
     gaugeFactor,
-    preMarginCost,
+    baseAfterGauge,
+    subtotalBeforeMargin,
     marginRate,
     marginMultiplier,
+    marginAmount,
     total,
   };
 }

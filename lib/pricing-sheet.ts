@@ -164,6 +164,8 @@ function buildPricing(rows: Array<{ c?: Array<SheetCell> }>): PricingConstants {
                 if (!isNaN(sizeTenths)) stormCollarPrices[sizeTenths] = value;
             } else if (upperKey.startsWith('COEF_')) {
                 modelCoefficients[trimmedKey.replace(/^COEF_/i, '')] = value;
+            } else if (normalizedKey === 'hole' || upperKey === 'HOLE_PRICE') {
+                pricing.HOLE_PRICE = value;
             } else if (upperKey === 'POWDER_COAT' || lowerKey === 'powdercoat') {
                 legacyPowderCoatPercent = value;
             } else if (
