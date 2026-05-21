@@ -96,6 +96,16 @@
   color: var(--accent);
   border-color: var(--color-border-active);
 }
+.chase-cover-configurator-root .vp-btn.is-active-accent {
+  background: rgb(209, 179, 130);
+  color: #fff;
+  border-color: rgb(209, 179, 130);
+}
+.chase-cover-configurator-root .vp-btn.is-active-accent:hover {
+  background: #c5a575;
+  color: #fff;
+  border-color: #c5a575;
+}
 .chase-cover-configurator-root .dim-overlay .dim-breakdown-test {
   margin-top: 10px;
   padding-top: 8px;

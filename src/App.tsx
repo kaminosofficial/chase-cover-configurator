@@ -1866,7 +1866,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
             {config.holes > 0 && (
               <button
                 type="button"
-                className={`vp-btn${config.moveHolesMode ? ' is-active' : ''}`}
+                className={`vp-btn${config.moveHolesMode ? ' is-active-accent' : ''}`}
                 title={config.moveHolesMode ? 'Done moving holes' : 'Move holes'}
                 aria-label={config.moveHolesMode ? 'Done moving holes' : 'Move holes'}
                 aria-pressed={config.moveHolesMode}
