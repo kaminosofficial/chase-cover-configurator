@@ -86,6 +86,48 @@
 }
 .chase-cover-configurator-root .vp-btn:hover { background: var(--bg); color: var(--text); }
 
+@media (max-width: 767px) {
+  .chase-cover-configurator-root .viewport-controls .desktop-ar { display: none; }
+}
+
+.chase-cover-configurator-root .vp-btn svg { display: block; flex-shrink: 0; }
+.chase-cover-configurator-root .vp-btn.is-active {
+  background: var(--bg);
+  color: var(--accent);
+  border-color: var(--color-border-active);
+}
+.chase-cover-configurator-root .dim-overlay .dim-breakdown-test {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-family: var(--sans);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.chase-cover-configurator-root .dim-overlay .dim-breakdown-test .dim-test-note {
+  font-size: 9px;
+  color: var(--text-helper);
+  font-style: italic;
+  margin-bottom: 6px;
+}
+.chase-cover-configurator-root .dim-overlay .dim-bd-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--text-muted);
+}
+.chase-cover-configurator-root .dim-overlay .dim-bd-total {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+  color: var(--text);
+}
+
 .chase-cover-configurator-root .dim-overlay {
   position: absolute; top: 14px; right: 14px;
   font-family: var(--mono); font-size: 11px; color: #666;
@@ -856,7 +898,7 @@
     font-size: 10px;
     line-height: 1;
   }
-  .chase-cover-configurator-root .viewport-controls .viewport-primary-btn.desktop-ar { display: none; }
+  .chase-cover-configurator-root .viewport-controls .vp-btn.desktop-ar { display: none; }
   .chase-cover-configurator-root .ar-btn-mobile {
     width: 44px;
     height: 44px;
@@ -1061,18 +1103,10 @@
     gap: 6px;
     max-width: calc(100% - 24px);
   }
-  .chase-cover-configurator-root .viewport-controls .vp-btn,
-  .chase-cover-configurator-root .viewport-controls .viewport-primary-btn,
-  .chase-cover-configurator-root .viewport-controls .viewport-action-btn {
+  .chase-cover-configurator-root .viewport-controls .vp-btn {
     min-height: 30px;
     height: 30px;
     border-radius: 6px;
-  }
-  .chase-cover-configurator-root .viewport-controls .viewport-primary-btn,
-  .chase-cover-configurator-root .viewport-controls .viewport-action-btn {
-    padding: 0 10px;
-    font-size: 11px;
-    line-height: 1;
   }
   .chase-cover-configurator-root .price-bar {
     padding: 14px 12px 12px;
@@ -1241,6 +1275,38 @@
     border-color: transparent transparent var(--text) transparent;
 }
 
+/* Price Loading Shimmer Animation */
+.chase-cover-configurator-root .price-value-loading-shimmer {
+  display: inline-block;
+  width: 70px;
+  height: 20px;
+  background-color: rgba(18, 18, 18, 0.08);
+  border-radius: 4px;
+  animation: price-shimmer-pulse 1.5s ease-in-out infinite;
+  vertical-align: middle;
+}
+
+@keyframes price-shimmer-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.25; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.chase-cover-configurator-root .price-loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(18, 18, 18, 0.1);
+  border-top-color: rgb(18, 18, 18);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chase-cover-configurator-root *, .chase-cover-configurator-root *::before, .chase-cover-configurator-root *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
+
+

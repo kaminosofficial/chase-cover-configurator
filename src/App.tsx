@@ -141,12 +141,12 @@ function computeStormCollarCost(config: ReturnType<typeof useConfigStore.getStat
 function IconMoveHoles() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 3v5M12 16v5" />
-      <path d="M3 12h5M16 12h5" />
-      <path d="m12 8-3-3 3 3" />
-      <path d="m12 16-3 3 3-3" />
-      <path d="m8 12-3-3 3 3" />
-      <path d="m16 12 3-3-3 3" />
+      <polyline points="5 9 2 12 5 15" />
+      <polyline points="9 5 12 2 15 5" />
+      <polyline points="15 19 12 22 9 19" />
+      <polyline points="19 9 22 12 19 15" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <line x1="12" y1="2" x2="12" y2="22" />
     </svg>
   );
 }
@@ -1916,44 +1916,53 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 ))}
                 <div className="dim-breakdown-test">
                   <div className="dim-test-note">Price breakdown (testing — disable later)</div>
-                  <div className="dim-bd-row">
-                    <span>Base (L+W+4&times;skirt)</span>
-                    <span>{fmtUsd(pricingBreakdown.baseGeometry)}</span>
-                  </div>
-                  <div className="dim-bd-row">
-                    <span>&times; Gauge ({pricingBreakdown.gaugeFactor})</span>
-                    <span>{fmtUsd(pricingBreakdown.baseAfterGauge)}</span>
-                  </div>
-                  {hasMaterialOrPaint && (
-                    <div className="dim-bd-row">
-                      <span>
-                        &times; Material ({pricingBreakdown.materialFactor})
-                        {pricingBreakdown.paintedMultiplier !== 1
-                          ? `, paint (${pricingBreakdown.paintedMultiplier})`
-                          : ''}
-                      </span>
-                      <span>{fmtUsd(pricingBreakdown.baseAfterMaterialPaint)}</span>
+                  {config.pricingLoaded ? (
+                    <>
+                      <div className="dim-bd-row">
+                        <span>Base (L+W+4&times;skirt)</span>
+                        <span>{fmtUsd(pricingBreakdown.baseGeometry)}</span>
+                      </div>
+                      <div className="dim-bd-row">
+                        <span>&times; Gauge ({pricingBreakdown.gaugeFactor})</span>
+                        <span>{fmtUsd(pricingBreakdown.baseAfterGauge)}</span>
+                      </div>
+                      {hasMaterialOrPaint && (
+                        <div className="dim-bd-row">
+                          <span>
+                            &times; Material ({pricingBreakdown.materialFactor})
+                            {pricingBreakdown.paintedMultiplier !== 1
+                              ? `, paint (${pricingBreakdown.paintedMultiplier})`
+                              : ''}
+                          </span>
+                          <span>{fmtUsd(pricingBreakdown.baseAfterMaterialPaint)}</span>
+                        </div>
+                      )}
+                      {pricingBreakdown.holesCost > 0 && (
+                        <div className="dim-bd-row"><span>Holes</span><span>{fmtUsd(pricingBreakdown.holesCost)}</span></div>
+                      )}
+                      {pricingBreakdown.skirtCost > 0 && (
+                        <div className="dim-bd-row"><span>Skirt surcharge</span><span>{fmtUsd(pricingBreakdown.skirtCost)}</span></div>
+                      )}
+                      {pricingBreakdown.stormCollarCost > 0 && (
+                        <div className="dim-bd-row"><span>Storm collars</span><span>{fmtUsd(pricingBreakdown.stormCollarCost)}</span></div>
+                      )}
+                      {pricingBreakdown.marginRate > 0 && (
+                        <div className="dim-bd-row"><span>Subtotal (pre-margin)</span><span>{fmtUsd(pricingBreakdown.subtotalBeforeMargin)}</span></div>
+                      )}
+                      {pricingBreakdown.marginRate > 0 && (
+                        <div className="dim-bd-row">
+                          <span>Kaminos margin ({(pricingBreakdown.marginRate * 100).toFixed(0)}%)</span>
+                          <span>{fmtUsd(pricingBreakdown.marginAmount)}</span>
+                        </div>
+                      )}
+                      <div className="dim-bd-total"><span>Total</span><span>{fmtUsd(pricingBreakdown.total)}</span></div>
+                    </>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '80px', gap: '8px', padding: '10px 0' }}>
+                      <div className="price-loading-spinner" />
+                      <div style={{ fontSize: '10px', color: 'var(--text-helper)' }}>Loading pricing...</div>
                     </div>
                   )}
-                  {pricingBreakdown.holesCost > 0 && (
-                    <div className="dim-bd-row"><span>Holes</span><span>{fmtUsd(pricingBreakdown.holesCost)}</span></div>
-                  )}
-                  {pricingBreakdown.skirtCost > 0 && (
-                    <div className="dim-bd-row"><span>Skirt surcharge</span><span>{fmtUsd(pricingBreakdown.skirtCost)}</span></div>
-                  )}
-                  {pricingBreakdown.stormCollarCost > 0 && (
-                    <div className="dim-bd-row"><span>Storm collars</span><span>{fmtUsd(pricingBreakdown.stormCollarCost)}</span></div>
-                  )}
-                  {pricingBreakdown.marginRate > 0 && (
-                    <div className="dim-bd-row"><span>Subtotal (pre-margin)</span><span>{fmtUsd(pricingBreakdown.subtotalBeforeMargin)}</span></div>
-                  )}
-                  {pricingBreakdown.marginRate > 0 && (
-                    <div className="dim-bd-row">
-                      <span>Kaminos margin ({(pricingBreakdown.marginRate * 100).toFixed(0)}%)</span>
-                      <span>{fmtUsd(pricingBreakdown.marginAmount)}</span>
-                    </div>
-                  )}
-                  <div className="dim-bd-total"><span>Total</span><span>{fmtUsd(pricingBreakdown.total)}</span></div>
                 </div>
               </>
             ) : (

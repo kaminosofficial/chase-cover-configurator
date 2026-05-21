@@ -39,6 +39,7 @@ export interface ConfigState {
   quantity: number;
   notes: string;
   price: number;
+  pricingLoaded: boolean;
   orbitEnabled: boolean;
   moveHolesMode: boolean;
   setOrbitEnabled: (v: boolean) => void;
@@ -95,6 +96,7 @@ const initial: StoreData = {
   showLabelsC: false,
   quantity: 1, notes: '',
   price: 0,
+  pricingLoaded: false,
   orbitEnabled: true,
   moveHolesMode: false,
 };
@@ -158,5 +160,8 @@ export const useConfigStore = create<ConfigState>()(
 
 onPricingLoaded(() => {
   const state = useConfigStore.getState();
-  useConfigStore.setState({ price: computePrice(state) });
+  useConfigStore.setState({
+    price: computePrice(state),
+    pricingLoaded: true
+  });
 });
