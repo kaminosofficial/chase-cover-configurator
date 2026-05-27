@@ -32,7 +32,7 @@ function Loader() {
     <div style={{
       position: 'absolute', inset: 0, zIndex: 10,
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      background: '#cdc9c0',
+      background: '#f5f3f0',
       opacity: (!active && progress >= 100) ? 0 : 1,
       transition: 'opacity 0.5s ease',
       pointerEvents: 'none',

@@ -225,4 +225,67 @@ import cssText from './styles/globals-scoped.css?inline';
             <App productId={productId} variantId={variantId} />
         </React.StrictMode>
     );
+
+    // 10. Mobile sticky scroll observer
+    // The .viewport CSS is set to position:relative by default on mobile.
+    // This observer switches it to position:sticky ONLY while the widget's
+    // top edge has scrolled above the viewport top. This prevents the WebGL
+    // canvas from bleeding into Shopify page sections above the widget when
+    // scrolling back down.
+    const setupMobileStickyScroll = () => {
+        const shadow = mount!.shadowRoot;
+        if (!shadow) return;
+
+        const trySetup = (attempt = 0) => {
+            const viewportEl = shadow.querySelector('.viewport') as HTMLElement | null;
+            if (!viewportEl) {
+                if (attempt < 20) setTimeout(() => trySetup(attempt + 1), 150);
+                return;
+            }
+
+            let currentlySticky = false;
+
+            const onScroll = () => {
+                if (window.innerWidth >= 768) {
+                    // Desktop: ensure no inline override left behind
+                    if (currentlySticky) {
+                        viewportEl.style.position = '';
+                        viewportEl.style.top = '';
+                        currentlySticky = false;
+                    }
+                    return;
+                }
+
+                // Query the sentinel inside the shadow DOM to get the true, non-sticky top boundary
+                const sentinelEl = shadow.querySelector('.scroll-sentinel') as HTMLElement | null;
+                const refEl = sentinelEl || mount!;
+                const refTop = refEl.getBoundingClientRect().top;
+                const shouldStick = refTop <= 0;
+
+                if (shouldStick === currentlySticky) return;
+                currentlySticky = shouldStick;
+
+                if (shouldStick) {
+                    // Widget top has scrolled above viewport — make viewer sticky
+                    viewportEl.style.position = 'sticky';
+                    viewportEl.style.top = '0';
+                } else {
+                    // Widget top is back in view — release sticky so canvas
+                    // no longer paints over Shopify content above
+                    viewportEl.style.position = 'relative';
+                    viewportEl.style.top = '';
+                }
+            };
+
+            // Use capture phase for scroll listener to capture events from any scrolling container
+            window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+            window.addEventListener('resize', onScroll, { passive: true });
+            onScroll(); // Run once on init
+        };
+
+        // Wait for React to render the viewport element
+        setTimeout(() => trySetup(), 300);
+    };
+
+    setupMobileStickyScroll();
 })();

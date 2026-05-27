@@ -65,7 +65,7 @@
 
 .chase-cover-configurator-root .app-layout { display: flex; flex: 1; overflow: hidden; position: relative; min-height: 0; height: 100%; }
 
-.chase-cover-configurator-root .viewport { flex: 1; position: relative; background: #cdc9c0; min-height: 0; }
+.chase-cover-configurator-root .viewport { flex: 1; position: relative; background: #f5f3f0; min-height: 0; }
 .chase-cover-configurator-root .viewport canvas { width: 100% !important; height: 100% !important; display: block; }
 
 .chase-cover-configurator-root .viewport-badge {
@@ -589,9 +589,9 @@
 
 .chase-cover-configurator-root .notes-textarea {
   width: 100%; background: #ffffff; border: 0.8px solid rgba(18, 18, 18, 0.05);
-  border-radius: 6px; padding: 14px 16px; color: var(--text-body);
-  font-family: var(--sans); font-size: 16px; font-weight: 500; line-height: 1.4; resize: vertical;
-  outline: none; transition: border-color 0.15s, box-shadow 0.15s; min-height: 120px;
+  border-radius: 6px; padding: 10px 12px; color: var(--text-body);
+  font-family: var(--sans); font-size: 16px; font-weight: 500; line-height: 1.4; resize: none;
+  outline: none; transition: border-color 0.15s, box-shadow 0.15s; min-height: 52px;
   box-shadow: var(--control-shadow);
 }
 .chase-cover-configurator-root .notes-textarea:focus-visible { border-color: rgba(18, 18, 18, 0.08); box-shadow: none; }
@@ -846,7 +846,9 @@
     flex: none;
     height: 35vh !important;
     min-height: 0;
-    position: sticky;
+    /* JS scroll observer toggles position between sticky/relative.
+       Default to relative so it never bleeds above the widget boundary. */
+    position: relative;
     top: 0;
     z-index: 100;
   }

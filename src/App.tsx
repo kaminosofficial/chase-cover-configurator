@@ -1877,6 +1877,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
         className="app-layout"
         style={{ '--mobile-preview-size': `${mobilePreviewSize}%` } as any}
       >
+        <div className="scroll-sentinel" style={{ position: 'absolute', top: 0, left: 0, width: '1px', height: '1px', pointerEvents: 'none', opacity: 0 }} />
         <div className="viewport">
           <ChaseViewer />
 

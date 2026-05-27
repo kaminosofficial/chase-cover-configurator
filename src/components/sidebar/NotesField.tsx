@@ -29,7 +29,7 @@ export function NotesField() {
     <div style={{ position: 'relative' }}>
       <textarea
         className="notes-textarea"
-        rows={3}
+        rows={2}
         placeholder="Any special instructions, custom requests, or additional details…"
         value={notes}
         onChange={handleChange}
