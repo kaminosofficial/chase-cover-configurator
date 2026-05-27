@@ -84,6 +84,25 @@ import cssText from './styles/globals-scoped.css?inline';
         if (document.visibilityState === 'visible') enforceThemeColor();
     });
 
+    // iPhone Safari mostly IGNORES theme-color and instead tints the address
+    // bar by sampling the page's top pixels and/or the <html> background
+    // (rubber-band overscroll color). Force <html> + <body> to white so the
+    // tint sample is white regardless of what content is on top.
+    //
+    // Scoped via an injected stylesheet rather than inline so theme styles
+    // that need transparency on inner containers still work. The IIFE only
+    // runs on pages with the configurator mount, so this is page-scoped.
+    const BG_STYLE_ID = 'chase-cover-configurator-bg';
+    if (!document.getElementById(BG_STYLE_ID)) {
+        const bgStyle = document.createElement('style');
+        bgStyle.id = BG_STYLE_ID;
+        bgStyle.textContent = `
+            html, body { background-color: #ffffff !important; }
+            html { background: #ffffff !important; }
+        `;
+        document.head.appendChild(bgStyle);
+    }
+
     // 1. Inject Google Fonts into document head (must be in light DOM for fonts to load)
     const FONT_ID = 'chase-cover-configurator-fonts';
     if (!document.getElementById(FONT_ID)) {
