@@ -55,6 +55,35 @@ import cssText from './styles/globals-scoped.css?inline';
 
     patchViewportForIOS();
 
+    // 0. Force the mobile browser address bar to stay WHITE.
+    //    Shopify renders <meta name="theme-color" content=""> (empty) in the head
+    //    BEFORE our defer-loaded IIFE runs. iOS Safari sees the empty value,
+    //    falls back to sampling page pixels near the top, and locks in the grey
+    //    color of the 3D viewer — which then stays "stuck" because Safari does
+    //    not always re-read theme-color when it mutates in place.
+    //
+    //    Fix: remove ALL existing theme-color meta tags and insert a fresh one
+    //    with content=#ffffff. Removing+re-inserting (rather than mutating)
+    //    tends to be more reliable across iOS versions. Then re-assert on
+    //    scroll/visibility events as belt-and-suspenders.
+    const enforceThemeColor = () => {
+        const existing = document.querySelectorAll('meta[name="theme-color"]');
+        existing.forEach((el) => el.parentNode?.removeChild(el));
+        const meta = document.createElement('meta');
+        meta.setAttribute('name', 'theme-color');
+        meta.setAttribute('content', '#ffffff');
+        document.head.appendChild(meta);
+    };
+    enforceThemeColor();
+    // Re-assert after the page is fully loaded (some themes inject meta tags late)
+    if (document.readyState !== 'complete') {
+        window.addEventListener('load', enforceThemeColor, { once: true });
+    }
+    // Re-assert when the tab becomes visible — iOS sometimes re-samples here
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') enforceThemeColor();
+    });
+
     // 1. Inject Google Fonts into document head (must be in light DOM for fonts to load)
     const FONT_ID = 'chase-cover-configurator-fonts';
     if (!document.getElementById(FONT_ID)) {
@@ -246,15 +275,6 @@ import cssText from './styles/globals-scoped.css?inline';
             spacer.style.cssText = 'width:100%;height:0px;margin:0;padding:0;border:none;pointer-events:none;';
             mount!.parentNode.insertBefore(spacer, mount);
         }
-
-        // Set or update the theme-color meta tag to keep the mobile browser's top address bar white
-        let themeColorMeta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null;
-        if (!themeColorMeta) {
-            themeColorMeta = document.createElement('meta');
-            themeColorMeta.name = 'theme-color';
-            document.head.appendChild(themeColorMeta);
-        }
-        themeColorMeta.setAttribute('content', '#ffffff');
 
         const trySetup = (attempt = 0) => {
             const viewportEl = shadow.querySelector('.viewport') as HTMLElement | null;
