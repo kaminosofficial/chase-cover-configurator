@@ -836,38 +836,42 @@
 .chase-cover-configurator-root .mobile-divider { display: none; }
 
 @media (max-width: 767px) {
+  .chase-cover-configurator-root { height: auto !important; overflow: auto !important; }
+  .chase-cover-configurator-root { height: auto !important; overflow: visible !important; }
   .chase-cover-configurator-root header { display: none; }
-  .chase-cover-configurator-root { overflow: auto; }
-  .chase-cover-configurator-root .app-layout { flex-direction: column; min-height: 0; }
+  .chase-cover-configurator-root .app-layout { flex-direction: column; min-height: 0; height: auto !important; overflow: visible !important; }
   
-  .chase-cover-configurator-root .viewport { flex: none; height: var(--mobile-preview-size, 35%); min-height: 0; }
+  .chase-cover-configurator-root .viewport {
+    flex: none;
+    height: 35vh !important;
+    min-height: 0;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
   
   .chase-cover-configurator-root .mobile-divider {
-    display: flex; justify-content: center; align-items: center;
-    height: 0; position: relative; z-index: 20; overflow: visible;
+    display: none !important;
   }
   
-  .chase-cover-configurator-root .mobile-divider-handle {
-    position: absolute; top: -12px;
-    width: 38px; height: 24px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 12px; display: flex; flex-direction: column;
-    justify-content: center; align-items: center; gap: 3px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-    cursor: ns-resize; touch-action: none; transition: background 0.2s;
+  .chase-cover-configurator-root .sidebar {
+    width: 100%;
+    min-width: unset;
+    max-width: none;
+    flex: none !important;
+    border-left: none;
+    border-top: 1px solid var(--border) !important;
+    max-height: none;
+    background: #ffffff;
+    height: auto !important;
+    overflow: visible !important;
   }
-  
-  .chase-cover-configurator-root .mobile-divider-handle::before, .chase-cover-configurator-root .mobile-divider-handle::after {
-    content: ""; display: block; width: 16px; height: 2px;
-    background: #a9a297; border-radius: 2px; transition: background 0.2s;
+  .chase-cover-configurator-root .sidebar-scroll {
+    padding: 16px;
+    height: auto !important;
+    overflow: visible !important;
+    flex: none !important;
   }
-  
-  .chase-cover-configurator-root .mobile-divider:active .mobile-divider-handle { background: #f0ebe2; }
-  .chase-cover-configurator-root .mobile-divider:active .mobile-divider-handle::before,
-  .chase-cover-configurator-root .mobile-divider:active .mobile-divider-handle::after { background: var(--accent); }
-  
-  .chase-cover-configurator-root .sidebar { width: 100%; min-width: unset; max-width: none; flex: 1; border-left: none; border-top: none; max-height: none; background: #ffffff; }
-  .chase-cover-configurator-root .sidebar-scroll { padding: 16px; }
   .chase-cover-configurator-root .sidebar-main-title {
     margin-bottom: 16px;
     font-size: 22px;

@@ -114,7 +114,6 @@ import cssText from './styles/globals-scoped.css?inline';
         (mount.style as CSSStyleDeclaration).alignSelf = 'center';
     }
 
-    const originalInlineHeight = mount.style.height;
     const applyResponsiveMountHeight = () => {
         const isDesktop = window.innerWidth >= 768;
         if (isDesktop) {
@@ -122,8 +121,8 @@ import cssText from './styles/globals-scoped.css?inline';
             mount!.style.height = `${desktopHeight}px`;
             mount!.style.minHeight = `${desktopHeight}px`;
         } else {
-            mount!.style.height = originalInlineHeight || '100%';
-            mount!.style.minHeight = '';
+            mount!.style.height = 'auto';
+            mount!.style.minHeight = 'auto';
         }
     };
 

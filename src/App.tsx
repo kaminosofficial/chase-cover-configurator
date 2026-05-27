@@ -151,6 +151,33 @@ function IconMoveHoles() {
   );
 }
 
+function IconCameraReset() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="1 4 1 10 7 10" />
+      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+    </svg>
+  );
+}
+
+function IconCameraTop() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="4" width="20" height="16" rx="2" fill="currentColor" fillOpacity="0.05" />
+      <text x="12" y="15.5" fontSize="11" fontWeight="900" textAnchor="middle" fill="currentColor" stroke="none" fontFamily="ui-sans-serif, system-ui, sans-serif">T</text>
+    </svg>
+  );
+}
+
+function IconCameraFront() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="4" width="20" height="16" rx="2" fill="currentColor" fillOpacity="0.05" />
+      <text x="12" y="15.5" fontSize="11" fontWeight="900" textAnchor="middle" fill="currentColor" stroke="none" fontFamily="ui-sans-serif, system-ui, sans-serif">F</text>
+    </svg>
+  );
+}
+
 function IconAr({ size = 20 }: { size?: number }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
@@ -1854,14 +1881,14 @@ export default function App({ productId, variantId }: AppProps = {}) {
           <ChaseViewer />
 
           <div className="viewport-controls">
-            <button className="vp-btn" title="Reset" onClick={() => cameraActions.reset()}>
-              &#8635;
+            <button className="vp-btn" title="Reset" onClick={() => cameraActions.reset()} aria-label="Reset Camera">
+              <IconCameraReset />
             </button>
-            <button className="vp-btn" title="Top" onClick={() => cameraActions.top()}>
-              &#8868;
+            <button className="vp-btn" title="Top" onClick={() => cameraActions.top()} aria-label="Top View">
+              <IconCameraTop />
             </button>
-            <button className="vp-btn" title="Front" onClick={() => cameraActions.front()}>
-              &#9723;
+            <button className="vp-btn" title="Front" onClick={() => cameraActions.front()} aria-label="Front View">
+              <IconCameraFront />
             </button>
             {config.holes > 0 && (
               <button
