@@ -65,8 +65,14 @@ header {
 
 .app-layout { display: flex; flex: 1; overflow: hidden; position: relative; min-height: 0; height: 100%; }
 
-.viewport { flex: 1; position: relative; background: #dbd8d0; min-height: 0; }
-.viewport canvas { width: 100% !important; height: 100% !important; display: block; }
+/* IMPORTANT: .viewport bg MUST stay white. iOS Safari (especially iOS 26+)
+   samples the background-color of any fixed/sticky element near the top of
+   the viewport to tint the address bar, ignoring theme-color. .viewport is
+   sticky on mobile, so if it were grey the address bar would go grey too.
+   The visible grey comes from the .viewport-bg child below. */
+.viewport { flex: 1; position: relative; background: #ffffff; min-height: 0; }
+.viewport-bg { position: absolute; inset: 0; background: #dbd8d0; pointer-events: none; z-index: 0; }
+.viewport canvas { width: 100% !important; height: 100% !important; display: block; position: relative; z-index: 1; }
 
 .viewport-badge {
   position: absolute; bottom: 14px; left: 14px;

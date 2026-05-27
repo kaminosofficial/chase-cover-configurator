@@ -1879,6 +1879,11 @@ export default function App({ productId, variantId }: AppProps = {}) {
       >
         <div className="scroll-sentinel" style={{ position: 'absolute', top: 0, left: 0, width: '1px', height: '1px', pointerEvents: 'none', opacity: 0 }} />
         <div className="viewport">
+          {/* Inner non-sticky background layer. The parent .viewport is white
+              so iOS Safari (which samples the sticky element's background-color
+              for the address-bar tint) sees white instead of grey. This layer
+              provides the visual grey behind the transparent 3D canvas. */}
+          <div className="viewport-bg" aria-hidden="true" />
           <ChaseViewer />
 
           <div className="viewport-controls">
