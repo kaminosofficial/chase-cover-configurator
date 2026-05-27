@@ -29,7 +29,7 @@ const DEFAULT_PRICING: PricingConstants = {
     EXT_S_W: 4.245,
     EXT_S_L: 2.495,
     EXT_S_AREA: 0.040,
-    MARGIN_RATE: 0,
+    MARGIN_RATE: 3,
     HOLE_PRICE: 25,
     SKIRT_SURCHARGE: 75,
     SKIRT_THRESHOLD: 6,
