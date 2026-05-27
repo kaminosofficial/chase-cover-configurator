@@ -124,7 +124,11 @@ import cssText from './styles/globals-scoped.css?inline';
         } else {
             mount!.style.height = 'auto';
             mount!.style.minHeight = 'auto';
-            mount!.style.overflow = 'visible';
+            // Use overflow:clip (not hidden) so the sticky 3D viewer cannot
+            // paint outside the widget's own bounding box on mobile.
+            // This prevents the grey canvas background from bleeding into the
+            // Shopify page area above when the user scrolls back down.
+            mount!.style.overflow = 'clip';
         }
     };
 
