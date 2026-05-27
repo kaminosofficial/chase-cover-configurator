@@ -236,6 +236,26 @@ import cssText from './styles/globals-scoped.css?inline';
         const shadow = mount!.shadowRoot;
         if (!shadow) return;
 
+        // Create a zero-height spacer in the light DOM immediately before the mount element.
+        // As a light-DOM sibling, its bounding rect is completely independent of shadow DOM sticky layouts.
+        const SPACER_CLASS = 'chase-cover-configurator-spacer';
+        let spacer = document.querySelector(`.${SPACER_CLASS}`) as HTMLElement | null;
+        if (!spacer && mount!.parentNode) {
+            spacer = document.createElement('div');
+            spacer.className = SPACER_CLASS;
+            spacer.style.cssText = 'width:100%;height:0px;margin:0;padding:0;border:none;pointer-events:none;';
+            mount!.parentNode.insertBefore(spacer, mount);
+        }
+
+        // Set or update the theme-color meta tag to keep the mobile browser's top address bar white
+        let themeColorMeta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null;
+        if (!themeColorMeta) {
+            themeColorMeta = document.createElement('meta');
+            themeColorMeta.name = 'theme-color';
+            document.head.appendChild(themeColorMeta);
+        }
+        themeColorMeta.setAttribute('content', '#ffffff');
+
         const trySetup = (attempt = 0) => {
             const viewportEl = shadow.querySelector('.viewport') as HTMLElement | null;
             if (!viewportEl) {
@@ -256,9 +276,8 @@ import cssText from './styles/globals-scoped.css?inline';
                     return;
                 }
 
-                // Query the sentinel inside the shadow DOM to get the true, non-sticky top boundary
-                const sentinelEl = shadow.querySelector('.scroll-sentinel') as HTMLElement | null;
-                const refEl = sentinelEl || mount!;
+                // Check the bounding rect of the light-DOM sibling spacer (reliable coordinates)
+                const refEl = spacer || mount!;
                 const refTop = refEl.getBoundingClientRect().top;
                 const shouldStick = refTop <= 0;
 
