@@ -265,41 +265,63 @@ import cssText from './styles/globals-scoped.css?inline';
 
             let currentlySticky = false;
 
-            const onScroll = () => {
-                if (window.innerWidth >= 768) {
-                    // Desktop: ensure no inline override left behind
-                    if (currentlySticky) {
-                        viewportEl.style.position = '';
-                        viewportEl.style.top = '';
-                        currentlySticky = false;
-                    }
-                    return;
-                }
-
-                // Check the bounding rect of the light-DOM sibling spacer (reliable coordinates)
-                const refEl = spacer || mount!;
-                const refTop = refEl.getBoundingClientRect().top;
-                const shouldStick = refTop <= 0;
-
-                if (shouldStick === currentlySticky) return;
-                currentlySticky = shouldStick;
-
-                if (shouldStick) {
-                    // Widget top has scrolled above viewport — make viewer sticky
+            const setSticky = (stick: boolean) => {
+                if (stick === currentlySticky) return;
+                currentlySticky = stick;
+                if (stick) {
                     viewportEl.style.position = 'sticky';
                     viewportEl.style.top = '0';
                 } else {
-                    // Widget top is back in view — release sticky so canvas
-                    // no longer paints over Shopify content above
                     viewportEl.style.position = 'relative';
                     viewportEl.style.top = '';
                 }
             };
 
-            // Use capture phase for scroll listener to capture events from any scrolling container
+            const isMobile = () => window.innerWidth < 768;
+
+            // Primary detection: IntersectionObserver on the light-DOM spacer.
+            // Unlike scroll listeners, IO reliably fires across iOS momentum/inertial
+            // scrolling so we never get stuck in the sticky state after rebound.
+            // The spacer is in the light DOM (outside shadow root), so its geometry
+            // is unaffected by the sticky element inside the viewport.
+            const refEl: HTMLElement = spacer || mount!;
+            const io = new IntersectionObserver(
+                (entries) => {
+                    if (!isMobile()) {
+                        setSticky(false);
+                        return;
+                    }
+                    const entry = entries[0];
+                    if (!entry) return;
+                    // Spacer is fully visible (or below the top) → release sticky.
+                    // Spacer is scrolled above the viewport (intersectionRatio = 0
+                    // AND boundingClientRect.top < 0) → engage sticky.
+                    const top = entry.boundingClientRect.top;
+                    setSticky(!entry.isIntersecting && top < 0);
+                },
+                { threshold: [0, 1], rootMargin: '0px' }
+            );
+            io.observe(refEl);
+
+            // Belt-and-suspenders: a scroll fallback that force-releases sticky
+            // whenever the spacer (or page) is at/below the viewport top. Covers
+            // the rare case where IO callbacks are throttled/missed during fast
+            // momentum scrolls in older iOS WebKit builds.
+            const onScroll = () => {
+                if (!isMobile()) {
+                    setSticky(false);
+                    return;
+                }
+                const top = refEl.getBoundingClientRect().top;
+                if (top > 0 && currentlySticky) setSticky(false);
+                else if (top <= 0 && !currentlySticky) setSticky(true);
+            };
+
             window.addEventListener('scroll', onScroll, { capture: true, passive: true });
             window.addEventListener('resize', onScroll, { passive: true });
-            onScroll(); // Run once on init
+            // iOS Safari fires touchend after momentum settles — last-ditch check.
+            window.addEventListener('touchend', onScroll, { passive: true });
+            onScroll();
         };
 
         // Wait for React to render the viewport element
