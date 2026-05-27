@@ -836,12 +836,13 @@ header {
 .mobile-divider { display: none; }
 
 @media (max-width: 767px) {
-  html, body { height: auto !important; overflow: auto !important; }
-  #root { height: auto !important; overflow: visible !important; }
+  html, body { height: auto !important; overflow: visible !important; display: block !important; }
+  #root { height: auto !important; overflow: visible !important; display: block !important; }
   header { display: none; }
-  .app-layout { flex-direction: column; min-height: 0; height: auto !important; overflow: visible !important; }
+  .app-layout { display: block !important; min-height: 0; height: auto !important; overflow: visible !important; }
   
   .viewport {
+    display: block !important;
     flex: none;
     height: 35vh !important;
     min-height: 0;

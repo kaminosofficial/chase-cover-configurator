@@ -120,9 +120,11 @@ import cssText from './styles/globals-scoped.css?inline';
             const desktopHeight = Math.max(640, Math.round(window.innerHeight * 0.8));
             mount!.style.height = `${desktopHeight}px`;
             mount!.style.minHeight = `${desktopHeight}px`;
+            mount!.style.overflow = '';
         } else {
             mount!.style.height = 'auto';
             mount!.style.minHeight = 'auto';
+            mount!.style.overflow = 'visible';
         }
     };
 

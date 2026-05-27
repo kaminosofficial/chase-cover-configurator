@@ -836,12 +836,13 @@
 .chase-cover-configurator-root .mobile-divider { display: none; }
 
 @media (max-width: 767px) {
-  .chase-cover-configurator-root { height: auto !important; overflow: auto !important; }
-  .chase-cover-configurator-root { height: auto !important; overflow: visible !important; }
+  .chase-cover-configurator-root { height: auto !important; overflow: visible !important; display: block !important; }
+  .chase-cover-configurator-root { height: auto !important; overflow: visible !important; display: block !important; }
   .chase-cover-configurator-root header { display: none; }
-  .chase-cover-configurator-root .app-layout { flex-direction: column; min-height: 0; height: auto !important; overflow: visible !important; }
+  .chase-cover-configurator-root .app-layout { display: block !important; min-height: 0; height: auto !important; overflow: visible !important; }
   
   .chase-cover-configurator-root .viewport {
+    display: block !important;
     flex: none;
     height: 35vh !important;
     min-height: 0;
