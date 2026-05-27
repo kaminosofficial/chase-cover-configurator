@@ -64,7 +64,7 @@ export function Sidebar({ descExpanded, setDescExpanded, onOpenRal, onAddToCart,
               <div className="measure-note">
                 You must add an extra <strong>1/2''</strong> to both the length and width measurements for proper
                 fitment. If you need a custom shape, please <a href="tel:+18887779789">give us a call</a>.{' '}
-                Need help measuring? <a href="https://kaminos.com/journal/news/how-to-measure-for-a-chase-cover" target="_blank" rel="noreferrer">Click here</a>.
+                Need help measuring? <a href="https://kaminos.com/blogs/journal/how-to-measure-for-a-chase-cover" target="_blank" rel="noreferrer">Click here</a>.
               </div>
             </div>
           )}
