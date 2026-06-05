@@ -9,8 +9,7 @@ import { cameraActions } from './utils/cameraRef';
 import { RalModal } from './components/ral/RalModal';
 import { formatFrac } from './utils/format';
 import { getHoleSizeInches, getHoleEdgeOffsets, holeWorld } from './utils/geometry';
-import { getStormCollarPrice, isApiReachable, loadPricingFromAPI, PRICING } from './config/pricing';
-import { computePricingBreakdown } from './utils/pricing';
+import { isApiReachable, loadPricingFromAPI } from './config/pricing';
 
 declare global {
   interface Window { QRious: any; __chaseDebug?: boolean; }
@@ -126,16 +125,6 @@ function formatHoleSummary(code: 'A' | 'B' | 'C', index: number, collar: CollarS
     ? ' (on center)'
     : ` [${code}1: ${formatFrac(collar.offset3)}" ${code}2: ${formatFrac(collar.offset4)}" ${code}3: ${formatFrac(collar.offset1)}" ${code}4: ${formatFrac(collar.offset2)}"]`;
   return holeText + offsetText;
-}
-
-function computeStormCollarCost(config: ReturnType<typeof useConfigStore.getState>): number {
-  let stormCollarCost = 0;
-  const collars = [config.collarA, config.collarB, config.collarC];
-  for (let i = 0; i < config.holes; i++) {
-    const c = collars[i];
-    if (c?.stormCollar && c.shape !== 'rect') stormCollarCost += getStormCollarPrice(c.dia);
-  }
-  return stormCollarCost;
 }
 
 function IconMoveHoles() {
@@ -1675,7 +1664,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const [arActive, setArActive] = useState(false);
   const [qrActive, setQrActive] = useState(false);
   const [arLoading, setArLoading] = useState(false);
-  const [descExpanded, setDescExpanded] = useState(false);
   const [ralOpen, setRalOpen] = useState(false);
   const [dimOpen, setDimOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1860,16 +1848,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
     ...(config.holes === 3 ? [formatHoleSummary('C', 3, config.collarC)] : []),
   ];
 
-  const stormCollarCost = computeStormCollarCost(config);
-  const pricingBreakdown = computePricingBreakdown(
-    { w: config.w, l: config.l, sk: config.sk, holes: config.holes, gauge: config.gauge, pc: config.pc, mat: config.mat },
-    PRICING,
-    stormCollarCost,
-  );
-  const fmtUsd = (n: number) => `$${n.toFixed(2)}`;
-  const hasMaterialOrPaint =
-    pricingBreakdown.materialFactor !== 1 || pricingBreakdown.paintedMultiplier !== 1;
-
   return (
     <>
       <div
@@ -1947,56 +1925,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 {displayDimLines.map((line, i) => (
                   <div key={i}>{line}</div>
                 ))}
-                <div className="dim-breakdown-test">
-                  <div className="dim-test-note">Price breakdown (testing — disable later)</div>
-                  {config.pricingLoaded ? (
-                    <>
-                      <div className="dim-bd-row">
-                        <span>Base (L+W+4&times;skirt)</span>
-                        <span>{fmtUsd(pricingBreakdown.baseGeometry)}</span>
-                      </div>
-                      <div className="dim-bd-row">
-                        <span>&times; Gauge ({pricingBreakdown.gaugeFactor})</span>
-                        <span>{fmtUsd(pricingBreakdown.baseAfterGauge)}</span>
-                      </div>
-                      {hasMaterialOrPaint && (
-                        <div className="dim-bd-row">
-                          <span>
-                            &times; Material ({pricingBreakdown.materialFactor})
-                            {pricingBreakdown.paintedMultiplier !== 1
-                              ? `, paint (${pricingBreakdown.paintedMultiplier})`
-                              : ''}
-                          </span>
-                          <span>{fmtUsd(pricingBreakdown.baseAfterMaterialPaint)}</span>
-                        </div>
-                      )}
-                      {pricingBreakdown.holesCost > 0 && (
-                        <div className="dim-bd-row"><span>Holes</span><span>{fmtUsd(pricingBreakdown.holesCost)}</span></div>
-                      )}
-                      {pricingBreakdown.skirtCost > 0 && (
-                        <div className="dim-bd-row"><span>Skirt surcharge</span><span>{fmtUsd(pricingBreakdown.skirtCost)}</span></div>
-                      )}
-                      {pricingBreakdown.stormCollarCost > 0 && (
-                        <div className="dim-bd-row"><span>Storm collars</span><span>{fmtUsd(pricingBreakdown.stormCollarCost)}</span></div>
-                      )}
-                      {pricingBreakdown.marginRate > 0 && (
-                        <div className="dim-bd-row"><span>Subtotal (pre-margin)</span><span>{fmtUsd(pricingBreakdown.subtotalBeforeMargin)}</span></div>
-                      )}
-                      {pricingBreakdown.marginRate > 0 && (
-                        <div className="dim-bd-row">
-                          <span>Kaminos margin ({(pricingBreakdown.marginRate * 100).toFixed(0)}%)</span>
-                          <span>{fmtUsd(pricingBreakdown.marginAmount)}</span>
-                        </div>
-                      )}
-                      <div className="dim-bd-total"><span>Total</span><span>{fmtUsd(pricingBreakdown.total)}</span></div>
-                    </>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '80px', gap: '8px', padding: '10px 0' }}>
-                      <div className="price-loading-spinner" />
-                      <div style={{ fontSize: '10px', color: 'var(--text-helper)' }}>Loading pricing...</div>
-                    </div>
-                  )}
-                </div>
               </>
             ) : (
               <button
@@ -2059,8 +1987,6 @@ export default function App({ productId, variantId }: AppProps = {}) {
         </div>
 
         <Sidebar
-          descExpanded={descExpanded}
-          setDescExpanded={setDescExpanded}
           onOpenRal={() => setRalOpen(true)}
           isSubmitting={isSubmitting}
           submittingAction={submittingAction}

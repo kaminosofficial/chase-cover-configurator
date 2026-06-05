@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { DimensionFields } from './DimensionField';
 import { HoleSelector } from './HoleSelector';
 import { CollarGroup } from './CollarGroup';
@@ -8,13 +7,10 @@ import { ToggleRow } from './ToggleRow';
 import { PowderCoatSection } from './PowderCoatSection';
 import { PriceDisplay } from './PriceDisplay';
 import { CartRow } from './CartRow';
-import { NotesField } from './NotesField';
 import { useConfigStore } from '../../store/configStore';
 import { InfoTooltip } from './InfoTooltip';
 
 interface SidebarProps {
-  descExpanded: boolean;
-  setDescExpanded: (v: boolean) => void;
   onOpenRal: () => void;
   onAddToCart: () => void;
   onBuyNow: () => void;
@@ -23,52 +19,15 @@ interface SidebarProps {
   submittingStep?: string;
 }
 
-export function Sidebar({ descExpanded, setDescExpanded, onOpenRal, onAddToCart, onBuyNow, isSubmitting = false, submittingAction = null, submittingStep = '' }: SidebarProps) {
+export function Sidebar({ onOpenRal, onAddToCart, onBuyNow, isSubmitting = false, submittingAction = null, submittingStep = '' }: SidebarProps) {
   const config = useConfigStore(s => s);
   const holes = config.holes;
   const pc = config.pc;
-
-  const [introExpanded, setIntroExpanded] = useState(false);
 
   return (
     <div className="sidebar">
       <div className={`sidebar-scroll${isSubmitting ? ' sidebar-scroll--disabled' : ''}`}>
         <h1 className="sidebar-main-title">Chase Cover Configurator</h1>
-
-        <section className={`project-info-card${introExpanded ? ' open' : ''}`}>
-          <button
-            className={`project-info-toggle${introExpanded ? ' open' : ''}`}
-            onClick={() => setIntroExpanded(!introExpanded)}
-            aria-expanded={introExpanded}
-            aria-controls="project-info-panel"
-          >
-            <span className="project-info-toggle-text">Project Info &amp; Instructions</span>
-            <span className="project-info-toggle-icon" aria-hidden="true" />
-          </button>
-
-          {introExpanded && (
-            <div id="project-info-panel" className="project-info-body">
-              <div className="product-desc">
-                <div className={`product-desc-text${descExpanded ? ' expanded' : ''}`}>
-                  Kaminos chase covers are custom-fabricated to your exact measurements for a precise,
-                  weatherproof fit. Choose from premium stainless steel or copper - each built to
-                  outlast and outperform standard covers. Add diagonal creases for improved water
-                  drainage and a drip edge for extra protection. Backed by our lifetime warranty
-                  against rust and corrosion.
-                </div>
-                <button className="desc-toggle" onClick={() => setDescExpanded(!descExpanded)}>
-                  {descExpanded ? 'Show Less' : 'Read More'}
-                </button>
-              </div>
-
-              <div className="measure-note">
-                You must add an extra <strong>1/2''</strong> to both the length and width measurements for proper
-                fitment. If you need a custom shape, please <a href="tel:+18887779789">give us a call</a>.{' '}
-                Need help measuring? <a href="https://kaminos.com/blogs/journal/how-to-measure-for-a-chase-cover" target="_blank" rel="noreferrer">Click here</a>.
-              </div>
-            </div>
-          )}
-        </section>
 
         <div className="section">
           <div className="section-title">
@@ -132,13 +91,6 @@ export function Sidebar({ descExpanded, setDescExpanded, onOpenRal, onAddToCart,
           </div>
         )}
 
-        <div className="section">
-          <div className="section-title">
-            <span className="section-title-label">Special Notes</span>
-            <span className="section-title-meta">(optional)</span>
-          </div>
-          <NotesField />
-        </div>
       </div>
 
       <div className="price-bar">
