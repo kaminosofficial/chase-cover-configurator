@@ -1,7 +1,6 @@
 import {
     DEFAULT_GAUGE_MULT,
     DEFAULT_MATERIAL_MULT,
-    DEFAULT_MODEL_COEFFICIENTS,
     normalizeMarginRate,
     normalizePaintedMultiplier,
     type PricingLike,
@@ -25,10 +24,6 @@ export function getStormCollarPrice(holeDia: number, prices: Record<number, numb
 }
 
 const DEFAULT_PRICING: PricingConstants = {
-    EXT_ANCHOR: 489.33,
-    EXT_S_W: 4.245,
-    EXT_S_L: 2.495,
-    EXT_S_AREA: 0.040,
     MARGIN_RATE: 3,
     HOLE_PRICE: 25,
     SKIRT_SURCHARGE: 75,
@@ -36,7 +31,6 @@ const DEFAULT_PRICING: PricingConstants = {
     PAINTED_MULTIPLIER: 1.5,
     GAUGE_MULT: { ...DEFAULT_GAUGE_MULT },
     MATERIAL_MULT: { ...DEFAULT_MATERIAL_MULT },
-    MODEL_COEFFICIENTS: { ...DEFAULT_MODEL_COEFFICIENTS },
     STORM_COLLAR_PRICES: {
         40: 30,
         50: 30,
@@ -141,7 +135,6 @@ function buildPricing(rows: Array<{ c?: Array<SheetCell> }>): PricingConstants {
     const gaugeMult: Record<number, number> = {};
     const materialMult: Record<string, number> = {};
     const stormCollarPrices: Record<number, number> = {};
-    const modelCoefficients: Record<string, number> = {};
     let legacyPowderCoatPercent: number | undefined;
     let kaminosMarginRate: number | undefined;
 
@@ -162,8 +155,6 @@ function buildPricing(rows: Array<{ c?: Array<SheetCell> }>): PricingConstants {
             } else if (upperKey.startsWith('SC_')) {
                 const sizeTenths = parseInt(trimmedKey.replace(/^SC_/i, ''), 10);
                 if (!isNaN(sizeTenths)) stormCollarPrices[sizeTenths] = value;
-            } else if (upperKey.startsWith('COEF_')) {
-                modelCoefficients[trimmedKey.replace(/^COEF_/i, '')] = value;
             } else if (normalizedKey === 'hole' || upperKey === 'HOLE_PRICE') {
                 pricing.HOLE_PRICE = value;
             } else if (upperKey === 'POWDER_COAT' || lowerKey === 'powdercoat') {
@@ -182,10 +173,6 @@ function buildPricing(rows: Array<{ c?: Array<SheetCell> }>): PricingConstants {
     }
 
     return {
-        EXT_ANCHOR: pricing.EXT_ANCHOR ?? DEFAULT_PRICING.EXT_ANCHOR,
-        EXT_S_W: pricing.EXT_S_W ?? DEFAULT_PRICING.EXT_S_W,
-        EXT_S_L: pricing.EXT_S_L ?? DEFAULT_PRICING.EXT_S_L,
-        EXT_S_AREA: pricing.EXT_S_AREA ?? DEFAULT_PRICING.EXT_S_AREA,
         MARGIN_RATE: normalizeMarginRate(kaminosMarginRate ?? pricing.MARGIN_RATE ?? DEFAULT_PRICING.MARGIN_RATE),
         HOLE_PRICE: pricing.HOLE_PRICE ?? DEFAULT_PRICING.HOLE_PRICE,
         SKIRT_SURCHARGE: pricing.SKIRT_SURCHARGE ?? DEFAULT_PRICING.SKIRT_SURCHARGE,
@@ -195,7 +182,6 @@ function buildPricing(rows: Array<{ c?: Array<SheetCell> }>): PricingConstants {
         ),
         GAUGE_MULT: { ...DEFAULT_PRICING.GAUGE_MULT, ...gaugeMult },
         MATERIAL_MULT: { ...DEFAULT_PRICING.MATERIAL_MULT, ...materialMult },
-        MODEL_COEFFICIENTS: { ...DEFAULT_PRICING.MODEL_COEFFICIENTS, ...modelCoefficients },
         STORM_COLLAR_PRICES: { ...DEFAULT_PRICING.STORM_COLLAR_PRICES, ...stormCollarPrices },
     };
 }

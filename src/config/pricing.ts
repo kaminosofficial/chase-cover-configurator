@@ -1,7 +1,6 @@
 import {
     DEFAULT_GAUGE_MULT,
     DEFAULT_MATERIAL_MULT,
-    DEFAULT_MODEL_COEFFICIENTS,
     type PricingLike,
 } from '../utils/pricing.js';
 
@@ -9,14 +8,11 @@ export interface PricingConstants extends PricingLike {
     STORM_COLLAR_PRICES: Record<number, number>;
 }
 
-// Default values (used as fallback and for local dev)
+// Default values (used as fallback and for local dev). Sheet rows that map
+// to these: 24/22/20 Ga, Kaminos Margin, copper, powdercoat, hole, SC_*.
 // Storm collar diameter = hole diameter - 1". Keys = collarDia * 10.
 // Prices from product catalog; sizes 15, 17, 20+ are extrapolated.
 export let PRICING: PricingConstants = {
-    EXT_ANCHOR: 489.33,
-    EXT_S_W: 4.245,
-    EXT_S_L: 2.495,
-    EXT_S_AREA: 0.040,
     MARGIN_RATE: 3,
     HOLE_PRICE: 25,
     SKIRT_SURCHARGE: 75,
@@ -24,7 +20,6 @@ export let PRICING: PricingConstants = {
     PAINTED_MULTIPLIER: 1.5,
     GAUGE_MULT: { ...DEFAULT_GAUGE_MULT, 24: 3.39 },
     MATERIAL_MULT: { ...DEFAULT_MATERIAL_MULT },
-    MODEL_COEFFICIENTS: { ...DEFAULT_MODEL_COEFFICIENTS },
     STORM_COLLAR_PRICES: {
         40: 30,
         50: 30,
@@ -102,7 +97,6 @@ export async function loadPricingFromAPI(apiBase: string) {
                 ...data,
                 GAUGE_MULT: { ...PRICING.GAUGE_MULT, ...(data.GAUGE_MULT ?? {}) },
                 MATERIAL_MULT: { ...PRICING.MATERIAL_MULT, ...(data.MATERIAL_MULT ?? {}) },
-                MODEL_COEFFICIENTS: { ...PRICING.MODEL_COEFFICIENTS, ...(data.MODEL_COEFFICIENTS ?? {}) },
                 STORM_COLLAR_PRICES: { ...PRICING.STORM_COLLAR_PRICES, ...(data.STORM_COLLAR_PRICES ?? {}) },
             };
             _apiReachable = true;
