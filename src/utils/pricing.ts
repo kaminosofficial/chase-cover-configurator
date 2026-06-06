@@ -159,29 +159,30 @@ export function normalizeMarginRate(value: number): number {
 
 /**
  * Panel base price from cover dimensions (inches).
- * In-range (W≤52, L≤100): L + W + 4×skirt — e.g. default 60+48+12 = $120.
- * User wording L×(2×skirt)+W×(2×skirt) is read as both long sides (2×skirt each) added to L+W, not 2×skirt×(L+W).
- * Oversized: sheet EXT_* anchor + width/length/area surcharges (regression coefficients unused).
+ *
+ * Single linear formula across the entire UI-valid range (L ≤ 120, W ≤ 60,
+ * skirt ≤ 12). User wording L×(2×skirt) + W×(2×skirt) is read as both long
+ * sides (2×skirt each) added to L + W, not 2×skirt×(L+W).
+ *
+ *   base = L + W + 4×skirt   — e.g. defaults 60 + 48 + 12 = $120.
+ *
+ * NOTE: The `pricing` argument (with EXT_ANCHOR / EXT_S_W / EXT_S_L /
+ * EXT_S_AREA) is kept for back-compat with callers that already pass it,
+ * but the values are intentionally unused — there is no separate "oversized"
+ * tier. A prior version branched at W > 52 or L > 100 onto EXT_ANCHOR-based
+ * extrapolation, which produced a ~4× price jump on a 1" change at the
+ * threshold and is reachable inside the UI's allowed range (W up to 60, L up
+ * to 120). Pricing is intentionally linear across the whole range now.
  */
 export function computeBasePanelPrice(
   w: number,
   l: number,
   sk: number,
-  pricing: PricingLike
+  _pricing: PricingLike
 ): number {
   if (!Number.isFinite(w) || !Number.isFinite(l) || w <= 0 || l <= 0) return 0;
   const skirt = Number.isFinite(sk) ? Math.max(0, sk) : 0;
-
-  if (w <= 52 && l <= 100) {
-    return l + w + 4 * skirt;
-  }
-
-  const extraWidth = Math.max(0, w - 52);
-  const extraLength = Math.max(0, l - 100);
-  return pricing.EXT_ANCHOR
-    + pricing.EXT_S_W * extraWidth
-    + pricing.EXT_S_L * extraLength
-    + pricing.EXT_S_AREA * extraWidth * extraLength;
+  return l + w + 4 * skirt;
 }
 
 export function computePricingBreakdown(
