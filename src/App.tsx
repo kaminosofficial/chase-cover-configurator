@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { ChaseViewer } from './components/viewer/ChaseViewer';
@@ -8,11 +8,20 @@ import { applyConfigState, getConfigState, exportToGLB } from './utils/ar';
 import { cameraActions } from './utils/cameraRef';
 import { RalModal } from './components/ral/RalModal';
 import { formatFrac } from './utils/format';
+import { CartProgressOverlay } from './components/CartProgressOverlay';
 import { getHoleSizeInches, getHoleEdgeOffsets, holeWorld } from './utils/geometry';
 import { isApiReachable, loadPricingFromAPI } from './config/pricing';
+import QRious from 'qrious';
+
+// Lazy: pulls in PdfReport + the base64 logo + (transitively) jsPDF/html2canvas.
+// In the SPA build this whole stack stays out of the main chunk until the user
+// actually opens the PDF preview. The Shopify IIFE inlines it (no code split).
+const PdfPreviewModal = lazy(() =>
+  import('./components/pdf/PdfPreviewModal').then(m => ({ default: m.PdfPreviewModal }))
+);
 
 declare global {
-  interface Window { QRious: any; __chaseDebug?: boolean; }
+  interface Window { __chaseDebug?: boolean; }
 }
 
 declare const __LOCAL_IP__: string | undefined;
@@ -123,7 +132,7 @@ function formatHoleSummary(code: 'A' | 'B' | 'C', index: number, collar: CollarS
     : `${label}: ${String.fromCharCode(8960)}${formatFrac(collar.dia)}"`;
   const offsetText = collar.centered
     ? ' (on center)'
-    : ` [${code}1: ${formatFrac(collar.offset3)}" ${code}2: ${formatFrac(collar.offset4)}" ${code}3: ${formatFrac(collar.offset1)}" ${code}4: ${formatFrac(collar.offset2)}"]`;
+    : ` [${code} Top: ${formatFrac(collar.offset3)}" ${code} Right: ${formatFrac(collar.offset4)}" ${code} Bottom: ${formatFrac(collar.offset1)}" ${code} Left: ${formatFrac(collar.offset2)}"]`;
   return holeText + offsetText;
 }
 
@@ -572,6 +581,100 @@ function applySectionUpdatesPreservingCartUi(sections: Record<string, string>, r
   });
 }
 
+function cartUiContainsVariant(variantId: number): boolean {
+  if (!variantId) return false;
+  const token = String(variantId);
+  const selectors = [
+    'cart-drawer',
+    'cart-notification',
+    'details[id*="CartDrawer"]',
+    '[id="CartDrawer"]',
+    '[id*="CartDrawer"]',
+  ];
+
+  const seen = new Set<Element>();
+  for (const selector of selectors) {
+    for (const element of document.querySelectorAll(selector)) {
+      if (seen.has(element)) continue;
+      seen.add(element);
+      if (element instanceof HTMLElement && element.innerHTML.includes(token)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+let drawerCatchUpToken = 0;
+
+/**
+ * Post-open drawer self-correction. Shopify's rendered cart sections can lag
+ * /cart.js by several seconds for freshly created variants, so the drawer can
+ * open before its HTML includes the new line item (badge says 1, drawer looks
+ * stale). The theme ignores our custom cart events, so without this the stale
+ * drawer never fixes itself. This polls in the background and injects the
+ * fresh drawer HTML once Shopify renders it, via the same
+ * applySectionUpdatesPreservingCartUi helper that the post-image refresh and
+ * pageshow resync already use in production. Touches ONLY the cart drawer
+ * section wrapper — nothing else on the page.
+ */
+function startPostOpenDrawerCatchUp(opts: {
+  variantId: number;
+  sectionIds: string[];
+  expectedPriceText?: string;
+  cartDataForEvents?: any;
+}) {
+  const { variantId, sectionIds, expectedPriceText, cartDataForEvents } = opts;
+  if (!variantId || sectionIds.length === 0) return;
+
+  const token = ++drawerCatchUpToken;
+  const startedAt = Date.now();
+  const MAX_MS = 45000;
+  const INTERVAL_MS = 2000;
+  let attempts = 0;
+
+  const tick = async () => {
+    if (token !== drawerCatchUpToken) return; // superseded by a newer add
+    if (cartUiContainsVariant(variantId)) {
+      DEBUG() && console.log(`[CART] Drawer shows variant ${variantId} — catch-up done after ${attempts} poll(s)`);
+      return;
+    }
+    if (Date.now() - startedAt > MAX_MS) {
+      emitCartDebug('post-open-catchup-exhausted', { variantId, attempts });
+      return;
+    }
+
+    attempts++;
+    try {
+      const fetched = await fetchRenderedSections(sectionIds, 'CART-CATCHUP');
+      const selection = selectUsableRenderedSections(
+        fetched,
+        { variantId, priceText: expectedPriceText },
+        { requireVariant: true },
+      );
+      const primaryReady = !!selection.usableSections
+        && Object.keys(selection.usableSections).some(isPrimaryCartSectionId);
+
+      if (token !== drawerCatchUpToken) return;
+      if (primaryReady && !cartUiContainsVariant(variantId)) {
+        applySectionUpdatesPreservingCartUi(selection.usableSections!, 'post-open-catchup');
+        dispatchCartSyncEvents(cartDataForEvents ?? null);
+        emitCartDebug('post-open-catchup-applied', {
+          variantId,
+          attempts,
+          ms: Date.now() - startedAt,
+        });
+        return;
+      }
+    } catch { /* transient — keep polling */ }
+
+    window.setTimeout(tick, INTERVAL_MS);
+  };
+
+  window.setTimeout(tick, INTERVAL_MS);
+}
+
 function removeConfigurationOptionRows(root: ParentNode) {
   const removePropertyRow = (element: Element) => {
     const wrapper = element.closest('.product-option') || element.parentElement;
@@ -737,6 +840,10 @@ function formatCheckoutErrorMessage(rawMessage: string, action: 'cart' | 'buy'):
     return `We hit a network issue while trying to ${actionLabel}. Please refresh the page and try again. If the problem continues, please check your connection and try once more.`;
   }
 
+  if (lower.includes('too many') || lower.includes('rate limit') || lower.includes('429') || lower.includes('throttle')) {
+    return `The store is handling a lot of requests right now, so we couldn't ${actionLabel}. Please wait a few seconds and try again.`;
+  }
+
   if (lower.includes('shopify is still finalizing your price')) {
     return `Your configuration is still syncing with Shopify. Please wait a moment, then refresh the page and try again.`;
   }
@@ -828,7 +935,11 @@ async function postAddToCartApi(opts: {
       lastFetchErr = fetchErr;
       lastWasTimeout = timedOut;
 
-      if (timedOut || attempt >= ADD_TO_CART_API_MAX_ATTEMPTS) {
+      // A timeout usually means a cold start or transient stall, not a dead end —
+      // give it ONE retry (previously a timeout failed instantly with no retry).
+      // Pure network errors retry up to the attempt cap as before.
+      const timeoutRetryExhausted = timedOut && attempt >= 2;
+      if (timeoutRetryExhausted || attempt >= ADD_TO_CART_API_MAX_ATTEMPTS) {
         emitCartDebug('api-request-failed', {
           tag,
           attempt,
@@ -841,13 +952,21 @@ async function postAddToCartApi(opts: {
         break;
       }
 
+      // Force a fresh connection before retrying — a stale/poisoned HTTP/2 pool
+      // makes every reuse fail instantly, so back-to-back retries on the same
+      // pool all die the same way. A cache-busted GET re-establishes it (same
+      // idea as the page-load warm-up, applied mid-flow).
+      try {
+        void fetch(`${apiBase}/api/pricing?warm=${Date.now()}`, { cache: 'no-store' }).catch(() => { /* ignore */ });
+      } catch { /* ignore */ }
+
       const delayMs = getAddToCartApiRetryDelayMs(attempt);
-      console.warn(`[${tag}] /api/add-to-cart retry ${attempt}/${ADD_TO_CART_API_MAX_ATTEMPTS} after network error: ${fetchErr?.message || 'unknown'} (${attemptMs}ms)`);
+      console.warn(`[${tag}] /api/add-to-cart retry ${attempt}/${ADD_TO_CART_API_MAX_ATTEMPTS} after ${timedOut ? 'timeout' : 'network error'}: ${fetchErr?.message || 'unknown'} (${attemptMs}ms)`);
       emitCartDebug('api-request-retry', {
         tag,
         attempt,
         maxAttempts: ADD_TO_CART_API_MAX_ATTEMPTS,
-        reason: 'network',
+        reason: timedOut ? 'timeout' : 'network',
         attemptMs,
         totalMs,
         delayMs,
@@ -897,11 +1016,19 @@ function selectPendingCartSections(
   variantId: number,
   expectedPriceText?: string,
 ) {
-  return selectUsableRenderedSections(
+  const usable = selectUsableRenderedSections(
     sections,
     { variantId, priceText: expectedPriceText },
     { requireVariant: true },
   ).usableSections;
+  if (!usable) return null;
+
+  // Only treat the result as "display-ready" when the primary cart section
+  // (the drawer itself) is present and valid. Non-primary sections like
+  // cart-icon-bubble pass validation unchecked, and a bubble-only result here
+  // short-circuited the retry loop before the price was verified — opening a
+  // drawer whose contents didn't include the new item.
+  return Object.keys(usable).some(isPrimaryCartSectionId) ? usable : null;
 }
 
 async function fetchCartState(tag: string): Promise<any | null> {
@@ -1011,12 +1138,20 @@ async function waitForUsableRenderedSections(opts: {
     seedSections = [],
   } = opts;
 
+  // "Ready" must include the primary cart section (the drawer itself).
+  // Non-primary sections (e.g. cart-icon-bubble) pass validation unchecked,
+  // so without this a bubble-only result would count as success and the
+  // drawer would open with stale contents — badge updated, item invisible.
+  const wantsPrimarySection = sectionIds.some(isPrimaryCartSectionId);
+  const selectionReady = (usable: Record<string, string> | null): boolean =>
+    !!usable && (!wantsPrimarySection || Object.keys(usable).some(isPrimaryCartSectionId));
+
   let lastRejectedSections: Record<string, any> | null = null;
 
   for (const seed of seedSections) {
     if (!seed.sections) continue;
     const selection = selectUsableRenderedSections(seed.sections, expected, requirements);
-    if (selection.usableSections) {
+    if (selectionReady(selection.usableSections)) {
       return {
         usableSections: selection.usableSections,
         rejectedSections: selection.rejectedSections,
@@ -1047,7 +1182,7 @@ async function waitForUsableRenderedSections(opts: {
 
     const fetchedSections = await fetchRenderedSections(sectionIds, tag);
     const selection = selectUsableRenderedSections(fetchedSections, expected, requirements);
-    if (selection.usableSections) {
+    if (selectionReady(selection.usableSections)) {
       return {
         usableSections: selection.usableSections,
         rejectedSections: selection.rejectedSections,
@@ -1169,6 +1304,60 @@ async function captureCanvasScreenshot(
 }
 
 /**
+ * Upload the 3D screenshot to /api/variant-image with retries. A variant
+ * without its image falls back to the default product photo in cart and
+ * checkout (confusing for custom configs), so transient failures — Shopify
+ * Admin throttling under rapid adds, flaky mobile networks — are retried.
+ * 413 (image too large) is NOT retried: the identical payload cannot succeed.
+ * Final failure emits telemetry so it's visible in Vercel logs.
+ */
+async function uploadVariantImageWithRetry(opts: {
+  apiBase: string;
+  variantId: string | number;
+  productId: string | null | undefined;
+  image: string;
+  tag: string;
+  maxAttempts?: number;
+}): Promise<string | null> {
+  const { apiBase, variantId, productId, image, tag, maxAttempts = 3 } = opts;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const startedAt = performance.now();
+    try {
+      const res = await fetch(`${apiBase}/api/variant-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variantId, productId, image }),
+      });
+      const ms = Math.round(performance.now() - startedAt);
+
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        const url = data?.imageUrl ?? null;
+        DEBUG() && console.log(`[IMG] [${tag}] Upload ok on attempt ${attempt}/${maxAttempts} (${ms}ms)`);
+        return url;
+      }
+
+      if (res.status === 413) {
+        console.warn(`[IMG] [${tag}] Upload rejected as too large (413) — not retrying`);
+        return null;
+      }
+
+      console.warn(`[IMG] [${tag}] Upload attempt ${attempt}/${maxAttempts} failed: HTTP ${res.status} (${ms}ms)`);
+    } catch (e: any) {
+      console.warn(`[IMG] [${tag}] Upload attempt ${attempt}/${maxAttempts} error: ${e?.message}`);
+    }
+
+    if (attempt < maxAttempts) {
+      await new Promise(r => setTimeout(r, attempt === 1 ? 1500 : 4000));
+    }
+  }
+
+  emitCartDebug('image-upload-failed', { variantId, attempts: maxAttempts, tag });
+  return null;
+}
+
+/**
  * Unified add-to-cart with retry: handles both "sold out" (variant not yet
  * visible) AND "$0 price" (variant visible but price not propagated) in a
  * single time-budgeted loop. Propagation is NEVER surfaced as an error.
@@ -1241,11 +1430,23 @@ async function addToCartWithRetry(opts: {
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => '');
-          const compactError = errorText.replace(/\s+/g, ' ').trim();
+          // Rate-limit/bot-protection responses are full HTML challenge pages —
+          // never let that markup become a user-facing error message.
+          const looksLikeHtml = /^\s*</.test(errorText);
+          const compactError = looksLikeHtml ? '' : errorText.replace(/\s+/g, ' ').trim();
 
           if (res.status === 422) {
             console.warn(`[${tag}] cart/add.js still propagating: HTTP 422 ${compactError.slice(0, 160)}`);
             onStep?.(`${stepPrefix}:syncing`);
+            continue;
+          }
+
+          if (res.status === 429) {
+            // Shopify per-IP rate limit (reproduced live at ~46 adds/40s).
+            // Retryable, not fatal — back off harder and stay in the budget.
+            console.warn(`[${tag}] cart/add.js rate limited (429) — backing off before retry`);
+            onStep?.(`${stepPrefix}:syncing`);
+            await new Promise(r => setTimeout(r, 3500 + Math.round(Math.random() * 1000)));
             continue;
           }
 
@@ -1449,11 +1650,21 @@ async function continueCartPreparationUntilVerified(opts: {
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => '');
-          const compactError = errorText.replace(/\s+/g, ' ').trim();
+          // Rate-limit/bot-protection responses are full HTML challenge pages —
+          // never let that markup become a user-facing error message.
+          const looksLikeHtml = /^\s*</.test(errorText);
+          const compactError = looksLikeHtml ? '' : errorText.replace(/\s+/g, ' ').trim();
 
           if (res.status === 422) {
             console.warn(`[${tag}] Pending add still propagating: HTTP 422 ${compactError.slice(0, 160)}`);
             onStep?.(`${stepPrefix}:syncing`);
+            continue;
+          }
+
+          if (res.status === 429) {
+            console.warn(`[${tag}] Pending add rate limited (429) — backing off before retry`);
+            onStep?.(`${stepPrefix}:syncing`);
+            await new Promise(r => setTimeout(r, 3500 + Math.round(Math.random() * 1000)));
             continue;
           }
 
@@ -1669,8 +1880,37 @@ export default function App({ productId, variantId }: AppProps = {}) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<'cart' | 'buy' | null>(null);
   const [submittingStep, setSubmittingStep] = useState<string>('');
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
   // Synchronous guard against double-taps â€” React state can be stale across rapid clicks
   const submittingRef = useRef(false);
+
+  // While the PDF modal OR the cart progress overlay is up on Shopify, temporarily
+  // raise the z-index of the shadow host's whole ancestor chain. Both must stay
+  // INSIDE the shadow root (portaling broke mobile PDF generation), but in there
+  // their z-index can't escape theme stacking contexts — so sticky headers /
+  // later sections painted over them. Raising each ancestor wins the stacking
+  // fight at every level; original inline styles are restored exactly on hide.
+  const pageOverlayActive = pdfModalOpen || (isSubmitting && submittingAction !== null);
+  useEffect(() => {
+    if (!pageOverlayActive) return;
+    const rootNode = appLayoutRef.current?.getRootNode();
+    const host = rootNode instanceof ShadowRoot ? (rootNode.host as HTMLElement) : null;
+    if (!host) return; // standalone SPA — no shadow root, nothing to fix
+    const touched: Array<{ el: HTMLElement; zIndex: string; position: string }> = [];
+    let el: HTMLElement | null = host;
+    while (el && el !== document.body && el !== document.documentElement) {
+      touched.push({ el, zIndex: el.style.zIndex, position: el.style.position });
+      if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+      el.style.zIndex = '2147483000';
+      el = el.parentElement;
+    }
+    return () => {
+      touched.forEach(({ el: t, zIndex, position }) => {
+        t.style.zIndex = zIndex;
+        t.style.position = position;
+      });
+    };
+  }, [pageOverlayActive]);
 
   const arViewerRef = useRef<any>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1800,8 +2040,8 @@ export default function App({ productId, variantId }: AppProps = {}) {
       const pageUrl = pagePath.split('?')[0];
       const url = pageUrl + '#ar=' + stateStr;
 
-      if (qrCanvasRef.current && window.QRious) {
-        new window.QRious({ element: qrCanvasRef.current, value: url, size: 200, background: 'white', foreground: 'black', level: 'M' });
+      if (qrCanvasRef.current) {
+        new QRious({ element: qrCanvasRef.current, value: url, size: 200, background: 'white', foreground: 'black', level: 'M' });
       }
       if (qrUrlRef.current) qrUrlRef.current.textContent = pageUrl;
       setQrActive(true);
@@ -1988,6 +2228,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
         <Sidebar
           onOpenRal={() => setRalOpen(true)}
+          onExportPdf={() => setPdfModalOpen(true)}
           isSubmitting={isSubmitting}
           submittingAction={submittingAction}
           submittingStep={submittingStep}
@@ -2113,11 +2354,19 @@ export default function App({ productId, variantId }: AppProps = {}) {
               if (data.variantId && !data.variantReused) {
                 imageUploadPromise = (async () => {
                   const captureResult = await screenshotBase64Promise;
-                  const screenshotBase64 = captureResult.image;
+                  let screenshotBase64 = captureResult.image;
                   const captureMs = captureResult.captureMs;
 
                   if (!screenshotBase64) {
-                    DEBUG() && console.warn('[IMG] Screenshot unavailable before cart open; skipping upload');
+                    // Capture can fail on phones (WebGL context dropped under
+                    // memory pressure). One fresh attempt — the canvas has
+                    // usually recovered by now.
+                    DEBUG() && console.warn('[IMG] First capture failed — retrying once');
+                    screenshotBase64 = await captureCanvasScreenshot(appLayoutRef, { resetView: true, hideLabels: true });
+                  }
+
+                  if (!screenshotBase64) {
+                    console.warn('[IMG] Screenshot unavailable after retry; skipping upload');
                     emitCartDebug('image-capture-complete', {
                       variantId: debugVariantId,
                       captureMs,
@@ -2134,36 +2383,23 @@ export default function App({ productId, variantId }: AppProps = {}) {
                     dom: collectCartDomSnapshot(),
                   });
 
-                  const uploadStartedAt = performance.now();
-                  try {
-                    const imgRes = await fetch(`${apiBase}/api/variant-image`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        variantId: data.variantId,
-                        productId: resolvedShopifyIds.productId,
-                        image: screenshotBase64,
-                      }),
-                    });
-                    const uploadMs = Math.round(performance.now() - uploadStartedAt);
-                    if (!imgRes.ok) {
-                      console.warn(`[IMG] Upload failed before cart open: HTTP ${imgRes.status} (${uploadMs}ms)`);
-                      return null;
-                    }
-                    const imgData = await imgRes.json().catch(() => null);
-                    expectedImageUrl = imgData?.imageUrl ?? null;
+                  const uploadedUrl = await uploadVariantImageWithRetry({
+                    apiBase,
+                    variantId: data.variantId,
+                    productId: resolvedShopifyIds.productId,
+                    image: screenshotBase64,
+                    tag: 'CART',
+                  });
+                  if (uploadedUrl) {
+                    expectedImageUrl = uploadedUrl;
                     emitCartDebug('image-upload-complete', {
                       variantId: debugVariantId,
                       imageUrl: expectedImageUrl,
                       captureMs,
-                      uploadMs,
                       dom: collectCartDomSnapshot(),
                     });
-                    return expectedImageUrl;
-                  } catch (e: any) {
-                    console.warn('[IMG] Upload error before cart open:', e?.message);
-                    return null;
                   }
+                  return uploadedUrl;
                 })();
               }
 
@@ -2251,12 +2487,17 @@ export default function App({ productId, variantId }: AppProps = {}) {
                 imageUrl: expectedImageUrl,
               };
               const verifiedSections = await fetchRenderedSections(drawerSectionIds, 'CART');
+              // 8s budget: prefer opening the drawer WITH the item already in it
+              // over opening fast-but-stale and having the catch-up loop pop it
+              // in afterwards (client found that jarring). Rendered sections
+              // typically lag /cart.js by 0.5–6s; the post-open catch-up loop
+              // remains the safety net for the rare longer tail.
               const sectionReadiness = await waitForUsableRenderedSections({
                 sectionIds: drawerSectionIds,
                 tag: 'CART-SECTIONS',
                 expected: renderExpectation,
                 requirements: { requireVariant: true },
-                maxWaitMs: drawerSectionIds.length > 0 ? 3500 : 0,
+                maxWaitMs: drawerSectionIds.length > 0 ? 8000 : 0,
                 seedSections: [
                   { source: 'verified-initial', sections: verifiedSections },
                   { source: 'bundled-initial', sections: finalRetryResult.sectionsHtml },
@@ -2316,34 +2557,15 @@ export default function App({ productId, variantId }: AppProps = {}) {
               saveConfigForRestore();
 
               if (drawerSectionIds.length > 0 && !sectionReadiness.usableSections) {
-                // Sections still show $0 â€” DON'T redirect to /cart (it would also show $0).
-                // Instead, keep the spinner and poll a bit longer for correct sections.
-                console.warn('[CART] Sections not ready after initial wait â€” extended retry...');
-                const extendedSections = await waitForUsableRenderedSections({
-                  sectionIds: drawerSectionIds,
-                  tag: 'CART-EXTENDED',
-                  expected: renderExpectation,
-                  requirements: { requireVariant: true },
-                  maxWaitMs: 6000,
-                  delayMs: 2000,
-                  seedSections: [],
+                // Drawer HTML still stale ($0 / item missing). Don't keep the user
+                // waiting on a spinner — open now and let the post-open catch-up
+                // loop inject the fresh drawer HTML the moment Shopify renders it.
+                console.warn('[CART] Sections not ready pre-open — relying on post-open catch-up');
+                emitCartDebug('pre-open-sections-not-ready', {
+                  variantId: debugVariantId,
+                  targetItem: summarizeCartItemForDebug(findTargetCartItem(finalCartData, debugVariantId)),
+                  dom: collectCartDomSnapshot(),
                 });
-
-                if (extendedSections.usableSections) {
-                  DEBUG() && console.log('[CART] Extended retry got usable sections');
-                  applySectionUpdates(extendedSections.usableSections);
-                  finalCartData = { ...finalCartData, sections: extendedSections.usableSections };
-                } else {
-                  // Last resort: open drawer anyway â€” the theme will render whatever it has,
-                  // and we dispatch sync events so it can self-correct
-                  console.warn('[CART] Extended retry exhausted â€” opening drawer with best-effort sections');
-                  emitCartDebug('drawer-open-skipped', {
-                    variantId: debugVariantId,
-                    reason: 'rendered-sections-not-ready-extended',
-                    targetItem: summarizeCartItemForDebug(findTargetCartItem(finalCartData, debugVariantId)),
-                    dom: collectCartDomSnapshot(),
-                  });
-                }
               }
 
               // Open the cart drawer/notification â€” price is correct by now
@@ -2352,6 +2574,16 @@ export default function App({ productId, variantId }: AppProps = {}) {
               if (drawerOpened) {
                 DEBUG() && console.log('[CART] Cart drawer opened');
                 dispatchCartSyncEvents(finalCartData);
+                // Background self-correction: if the drawer DOM doesn't show the
+                // new item yet (rendered sections lagged behind cart.js), poll
+                // quietly and fill it in once Shopify renders it. No-op when the
+                // drawer is already correct.
+                startPostOpenDrawerCatchUp({
+                  variantId: debugVariantId,
+                  sectionIds: drawerSectionIds,
+                  expectedPriceText,
+                  cartDataForEvents: finalCartData,
+                });
               } else {
                 dispatchCartSyncEvents(finalCartData);
                 window.location.assign(buildShopifyPath('cart'));
@@ -2566,21 +2798,17 @@ export default function App({ productId, variantId }: AppProps = {}) {
               if (screenshotBase64 && data.variantId && !data.variantReused) {
                 const tImg = performance.now();
                 DEBUG() && console.log('[IMG] Buy Now â€” uploading before checkout redirect...');
-                try {
-                  const imgRes = await fetch(`${apiBase}/api/variant-image`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      variantId: data.variantId,
-                      productId: resolvedShopifyIds.productId,
-                      image: screenshotBase64,
-                    }),
-                  });
-                  const imgMs = Math.round(performance.now() - tImg);
-                  DEBUG() && console.log(`[IMG] Buy Now upload: ${imgRes.ok ? 'ok' : imgRes.status} in ${imgMs}ms`);
-                } catch (e: any) {
-                  console.warn('[IMG] Buy Now upload failed:', e?.message);
-                }
+                // 2 attempts max: the image matters at checkout, but we won't
+                // hold the redirect through a third long retry.
+                const buyImageUrl = await uploadVariantImageWithRetry({
+                  apiBase,
+                  variantId: data.variantId,
+                  productId: resolvedShopifyIds.productId,
+                  image: screenshotBase64,
+                  tag: 'BUY',
+                  maxAttempts: 2,
+                });
+                DEBUG() && console.log(`[IMG] Buy Now upload: ${buyImageUrl ? 'ok' : 'failed'} in ${Math.round(performance.now() - tImg)}ms`);
               }
 
               // Step 4: Go straight to checkout
@@ -2612,9 +2840,29 @@ export default function App({ productId, variantId }: AppProps = {}) {
             }
           }}
         />
+
+        {isSubmitting && submittingAction && (
+          <CartProgressOverlay action={submittingAction} step={submittingStep} />
+        )}
       </div>
 
       <RalModal open={ralOpen} onClose={() => setRalOpen(false)} />
+      {/* IMPORTANT: the PDF modal must stay INSIDE the shadow root. Portaling it
+          to the light DOM (tried June 2026) broke mobile PDF generation/download
+          on Shopify — html2canvas had to rasterize against the full theme page
+          instead of the isolated configurator DOM. The sticky-header overlap is
+          handled inside the modal with top padding instead. */}
+      {pdfModalOpen && (
+        <Suspense fallback={null}>
+          <PdfPreviewModal
+            open={pdfModalOpen}
+            onClose={() => setPdfModalOpen(false)}
+            captureSnapshot={async () => {
+              return captureCanvasScreenshot(appLayoutRef, { resetView: true, hideLabels: true });
+            }}
+          />
+        </Suspense>
+      )}
 
       {(() => {
         const portalTarget = (window as any).__chasePortalContainer as HTMLElement | undefined;

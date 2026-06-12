@@ -214,7 +214,7 @@ The IIFE detects its own origin by scanning `<script>` tags for one containing `
   2. Fetches all existing variants; finds match by hash + price
   3. If found → reuses existing variant (instant, no propagation needed)
   4. If not found → creates new variant via `productVariantsBulkCreate` GraphQL
-  5. Quick propagation hint (3s max) — client owns the real retry loop
+  5. No server-side propagation wait (removed June 2026 — the old probe polled `products/{handle}.json`, which propagates ~10s ahead of `/cart/add.js`, so its answer was meaningless). `propagated` is `true` only for reused variants; the client owns the real readiness loop
 - **Variant cleanup**: Proactive cleanup when nearing 100-variant Shopify Basic limit (deletes CC-* variants older than 24h)
 - Returns `{ variantId, variantReused, propagated, price, properties, _timing }`
 - Line item `properties` include: Dimensions, Material & Gauge, Options, Powder Coat, Holes, per-hole details, Special Notes, hidden `_config_json`
@@ -373,20 +373,22 @@ Each configuration produces a deterministic hash using FNV-1a:
 
 ---
 
-## PDF Generation
+## PDF Generation (spec-sheet export, ported from the cap configurator June 2026)
 
-Users can download a PDF specification/pricing worksheet via the "Download PDF" button in `CartRow.tsx`.
+Users preview and download an A4 spec sheet via the **Export PDF** button next to the price (`Sidebar.tsx`), which opens `PdfPreviewModal`.
 
 ### How It Works
 
-1. `PdfReport.tsx` renders a hidden HTML report off-screen (`position: absolute; top: -9999px`)
-2. The report includes:
-   - Kaminos header with date and order number field
-   - Top-down SVG drawing of the cover with holes positioned using `holeWorld()` from `geometry.ts`
-   - Dimensions, hole configurations, material, gauge, options
-   - Pricing summary (unit price, quantity, total)
-3. `pdfGenerator.ts` uses `html2canvas` to capture the hidden element, then `jsPDF` to create a letter-size PDF
-4. File is downloaded as `KAMINOS-ChaseCover-YYYY-MM-DD.pdf`
+1. `PdfPreviewModal.tsx` (lazy-loaded) captures a 3D snapshot, then renders `PdfReport.tsx` — the "Airy" layout: Kaminos header (runtime-cropped icon + wordmark via `getCroppedLogo()` in `kaminosLogo.ts`), hero snapshot, dimensions/holes/material/pricing. **Multi-page** when holes > 1 (`.pdf-page-render` per page; footer shows "Page 1 of 2" only on multi-page exports).
+2. `generatePdf()` in `pdfGenerator.ts` rasterizes each page — **html-to-image on desktop** (pixel-perfect SVG foreignObject) / **html2canvas on mobile** (foreignObject hangs on iOS) — then assembles an A4 PDF with jsPDF. Libraries are dynamic imports (lazy chunk in the SPA build; inlined in the IIFE).
+3. `deliverPdf()` — **identical to the cap's proven version**: Web Share sheet on mobile (files + title only, AbortError returns), download fallback with `revokeObjectURL` **delayed 4s** (revoking synchronously killed downloads on iOS).
+4. Filename: `KAMINOS-ChaseCover-YYYY-MM-DD.pdf`.
+
+### Hard constraints (learned 2026-06-12, do not regress)
+
+- **The modal must stay INSIDE the shadow root.** Portaling it to the light DOM broke mobile PDF generation on Shopify (html2canvas rasterized against the full theme page). Sticky-header overlap is handled with `justifyContent: 'flex-start'` + `padding: '14vh 16px 3vh'` + `maxHeight: '82vh'` inside the modal, plus the host z-chain raise (below).
+- **Host z-chain raise**: while the PDF modal or cart overlay is open, `App.tsx` temporarily raises the shadow host's whole ancestor chain to max z-index (restored exactly on close) so theme headers/sections can't paint over in-shadow dialogs.
+- **Telemetry**: `pdfDebug()` posts pipeline events (libs-loaded / page-captured / done / share / fallback / errors) to `POST /api/cart-debug` — visible in Vercel function logs, tag `PDF-DBG`. Failures also show a user-facing alert instead of dying silently.
 
 ---
 
@@ -690,20 +692,36 @@ API handlers log warnings for requests from unknown origins via `warnUnknownOrig
 
 ## Key Decisions & History
 
+### June 2026 updates (ported from / aligned with the chimney cap configurator)
+
+- **PDF spec-sheet export**: see the **PDF Generation** section above — including the shadow-root constraint, the host z-chain raise, and the `PDF-DBG` telemetry. Porting truncation bugs fixed: `kaminosLogo.ts` base64 (logo was invisible), Export PDF button SVG path.
+- **Cart progress overlay** (`src/components/CartProgressOverlay.tsx`): frosted step-checklist overlay during Add to Cart / Buy with Shop, driven by the real `submittingStep` signals. On mobile (≤767px) it's `position: fixed` (viewport-anchored) with `touch-action: none`; the host z-chain raise keeps it above theme chrome on the embed.
+- **Server hardening** (`api/add-to-cart.ts`): proactive variant cleanup runs concurrently (blocks only at 99+ variants); 503 "Pricing temporarily unavailable" guard when `MARGIN_RATE ≤ 0` (prevents selling at cost if the sheet margin is blanked); quantity clamp aligned to client `MAX_QTY` = 10.
+- **QRious bundled** via npm; CDN `<script>` injections removed from `index.html` and `shopify-entry.tsx`.
+- **Cleanup cron**: every **10 days** (`0 0 */10 * *`), deletes CC-* variants older than 10 days. Manual dashboard: `/api/cleanup-variants?secret=<CRON_SECRET>` (defaults to `kaminos` if env unset).
+- **Deploys**: this project deploys via `npx vercel deploy --prod` from the working tree (`.vercel/` restored from `.vercel.bak`). The GitHub integration is reconnected, so **pushing to main may auto-deploy** — push deliberately.
+- **Drawer staleness + latency fixes (June 12, 2026 — chase only, cap port pending user test):**
+  - **Measured ground truth** (`scratch/probe-propagation.py`, run it any time): Shopify propagation for a brand-new variant varies wildly — one run: `/cart/add.js` accepted at 12s, cart price > $0 at 26s; another run 30 min later: accepted at 7s, priced at 7.5s. Rendered sections become usable ~0.5s after the price lands. This Shopify-side delay is the bulk of Add to Cart wait time and cannot be shortened client-side (speculative variant pre-creation was explicitly declined — client accepts 15–20s).
+  - **Server propagation probe deleted** (`api/add-to-cart.ts`): `waitForStorefrontPropagation`, `getProductHandle`, and the `storefrontDomain` derivation are gone. The probe checked a cache that propagates ~10s ahead of the cart endpoint, so `propagated: true` was a false signal — and it cost ~1.2s + one Admin API call per new variant. Server `_timing.propagationMs` is now always 0.
+  - **Bubble-only section bug (the "badge says 1, drawer empty" bug)**: `discoverCartSectionIds` requests both `cart-drawer` and the cart-icon-bubble section. `selectUsableRenderedSections` passes non-primary sections through unchecked, so a bubble-only result counted as "sections ready" — the pre-open wait exited instantly and the drawer opened with stale contents, while the theme ignored our custom cart events forever. Fixed in two places: `waitForUsableRenderedSections` and `selectPendingCartSections` now require a **primary** cart section (`isPrimaryCartSectionId`) before declaring readiness.
+  - **Post-open drawer catch-up** (`startPostOpenDrawerCatchUp` in App.tsx): after the drawer opens, if its DOM doesn't contain the new variant ID, poll rendered sections every 2s (up to 45s) and inject the fresh drawer HTML via `applySectionUpdatesPreservingCartUi` (the same helper the post-image refresh and pageshow resync already used). Token-guarded against overlapping adds; no-ops via a single DOM scan when the drawer is already correct. This is the permanent fix for stale-drawer states.
+  - **Extended 6s pre-open section wait deleted; initial wait raised 3.5s → 8s (June 13, 2026)**: the client found the open-stale-then-pop-in sequence jarring (drawer opened showing only the pre-existing items, new item appeared ~2s later via catch-up), so the pre-open wait budget is 8s — the drawer strongly prefers opening with the item already rendered. The post-open catch-up loop remains the safety net for the rare >8s rendered-section lag. Net worst-case spinner time is still shorter than the original 3.5s + 6s extended code.
+  - **Stress-test hardening (June 13, 2026, after client's rapid-add test from a phone)**: two failure modes surfaced when ~a dozen adds were fired within minutes from one device: (1) Shopify's per-IP bot protection started returning 429 challenge pages on `/cart/add.js`, which the unified retry loop hard-failed and surfaced raw ("Too many attempts…") — fixed by treating 429 as retryable with longer backoff and never using HTML bodies as error text; (2) one variant's screenshot upload died silently (no retry existed), leaving the variant permanently imageless → default product photo in the cart — fixed by capture-retry + `uploadVariantImageWithRetry`. See the "429 rate limiting" and "Cart image" bullets for details.
+
 - **Variant-based cart flow**: The primary cart flow uses Shopify product variants (not Draft Orders). Each config creates a deterministic variant on a single product. This integrates naturally with Shopify's cart, checkout, and order system.
 - **Shopify auth**: `client_credentials` fails when app org ≠ store org. Use static `SHOPIFY_ACCESS_TOKEN` from a **Store Admin custom app** (created in the client store's Admin > Settings > Apps > Develop apps). Auth is shared via `lib/shopify-auth.ts`.
 - **CSS isolation**: Shadow DOM used for Shopify embedding. `globals-scoped.css` is auto-synced from `globals.css` via a pre-build script — only ever edit `globals.css`.
 - **Hole position drift fix**: Unchecking "Centered on Cover" previously caused slight position drift due to 1/8" rounding. Fixed by removing rounding in the centered→offset conversion.
 - **Copper + powder coat**: Copper material always renders copper color. The `pc` boolean state is preserved so switching back to galvanized re-applies the powder coat color.
 - **Session persistence**: Zustand `persist` middleware was removed. Config is now saved to `sessionStorage` only immediately before cart redirect, and cleared immediately after restoration. This gives "back from cart restores config" without "refresh loads last session".
-- **Cart image**: 3D canvas is captured as JPEG (white background composite) and uploaded to Shopify via `stagedUploadsCreate` + product image REST API. Requires `write_files` scope. Fails silently — cart is always updated even if image upload fails.
+- **Cart image**: 3D canvas is captured as JPEG (white background composite) and uploaded to Shopify via `stagedUploadsCreate` + product image REST API. Requires `write_files` scope. Never blocks the cart — but as of June 13, 2026 it is no longer fire-and-forget-once: capture retries once if the canvas returns nothing (phones drop WebGL contexts under memory pressure), and `uploadVariantImageWithRetry` retries the upload up to 3× for Add to Cart / 2× for Buy Now with backoff (413 too-large is not retried; final failure emits `image-upload-failed` telemetry). Without an image the cart/checkout line falls back to the default product photo — which happened once during a June 12 stress test (variant `MFC-ed3b9abf`, 3rd add within 47s).
 - **$0 price prevention**: Cart drawer sections are validated before display. Sections containing `$0` are rejected and re-fetched (up to 18s total). Never redirects to `/cart` page (which would also show $0).
-- **429 rate limiting**: Shopify storefront 429s are retried with backoff (not treated as errors). Users never see rate limit messages.
+- **429 rate limiting**: Shopify storefront 429s are retried with a longer backoff (~3.5–4.5s) inside `addToCartWithRetry` / `continueCartPreparationUntilVerified`, never treated as fatal. (The June 2026 unified-loop rewrite had lost this — only 422 was retried — so Shopify's raw bot-challenge text leaked into the error alert during a stress test; restored June 13, 2026.) HTML challenge-page bodies are never used as error messages, and `formatCheckoutErrorMessage` maps any "too many/rate limit/throttle/429" text to a friendly "store is busy" message. Shopify's per-IP limit was reproduced live at ~46 rapid adds in 40s; mobile carrier CGNAT (shared IPs) lowers the effective threshold.
 - **Storm collar for rect holes**: Storm collar toggle is completely hidden (not just disabled) when hole shape is rectangle. Switching shape to rect auto-disables storm collar.
 - **Variant limit**: Shopify Basic plan = 100 variants max. Do NOT raise above 100. Proactive cleanup runs at 95+, emergency cleanup on 422.
 - **Google Sheets fallback**: If Google Sheets is unreachable, pricing falls back to hardcoded defaults in `lib/pricing-sheet.ts`. The configurator keeps working rather than breaking.
 - **Image size limit**: Server rejects images > ~500KB to prevent OOM (413 response).
-- **Drawer DOM never replaced after open**: A previous bug closed the drawer instantly because `applySectionUpdates()` replaced `innerHTML` on an open drawer, destroying event listeners and scroll lock cleanup. Fix: apply sections **before** opening; once open, only dispatch cart events. Background price polling and post-image refresh dispatch events instead of replacing DOM.
+- **Drawer DOM replacement after open — only via the preserving helper**: A previous bug closed the drawer instantly because raw `applySectionUpdates()` replaced `innerHTML` on an open drawer, destroying its open state and scroll lock cleanup. Rule: pre-open, raw `applySectionUpdates()` is fine; post-open, ONLY `applySectionUpdatesPreservingCartUi()` (snapshots open state, re-forces open, releases stray scroll locks). The post-image refresh, pageshow resync, and the June 2026 post-open catch-up loop all use it. Note the custom cart events we dispatch are ignored by the Kaminos theme — DOM replacement via the helper is the only mechanism that actually updates an open drawer.
 - **Drawer opens immediately on success**: Previously waited for full price/section verification before opening. Now the drawer opens as soon as `/cart/add.js` returns 200 with non-zero price; price/image sync continues in the background.
 - **Exponential backoff with jitter**: Cart add retries use `~570ms / ~1.1s / ~2.3s` exponential backoff (worst case ~4s) instead of the prior linear `1.5s / 3s / 4.5s` (worst case ~9s).
 - **No "sold out" error to user**: Variant propagation 422s are a Shopify timing issue, not real stock. User sees a friendly "try again" message only on real failure, never raw "sold out".

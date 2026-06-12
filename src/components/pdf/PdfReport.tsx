@@ -1,236 +1,458 @@
+import { useEffect, useState } from 'react';
 import { useConfigStore } from '../../store/configStore';
 import type { CollarState } from '../../store/configStore';
-import { getHoleEdgeOffsets, getHoleSizeInches, holeWorld, SC } from '../../utils/geometry';
+import { KAMINOS_LOGO_WHITE, getCroppedLogo } from './kaminosLogo';
+import { formatFrac } from '../../utils/format';
 
-function formatHoleDetails(collar: CollarState) {
-  const size = getHoleSizeInches(collar);
-  return collar.shape === 'rect'
-    ? `${size.sizeZ}" L x ${size.sizeX}" W, ${collar.height}" Height`
-    : `${collar.dia}" Dia, ${collar.height}" Height`;
+// Airy design tokens
+const C = {
+  ink: '#171411',
+  gold: '#C2974A',
+  goldSoft: '#D9BC86',
+  label: '#8E8E8E',
+  value: '#1A1A1A',
+  muted: '#9A9690',
+  hair: '#E6E4E0',
+  hairStrong: '#D8D5CF',
+  footerBg: '#EFEDEA',
+  cardBg: '#FBFAF8',
+  metaUrl: '#9C988F',
+};
+
+const FONT = "'Jost', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+const pageStyle = {
+  width: '794px',
+  height: '1123px',
+  background: '#ffffff',
+  color: C.value,
+  fontFamily: FONT,
+  boxSizing: 'border-box' as const,
+  display: 'flex',
+  flexDirection: 'column' as const,
+  WebkitFontSmoothing: 'antialiased',
+  position: 'relative' as const,
+};
+
+const headerStyle = {
+  background: C.ink,
+  color: '#fff',
+  padding: '30px 53px',
+  borderBottom: `2.5px solid ${C.gold}`,
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  flexShrink: 0,
+};
+
+const notesCardStyle = {
+  fontSize: '12px',
+  color: '#555',
+  lineHeight: 1.6,
+  padding: '12px 14px',
+  border: `1px solid ${C.hair}`,
+  borderRadius: '6px',
+  background: C.cardBg,
+  marginTop: '8px',
+  wordBreak: 'break-word' as const,
+  whiteSpace: 'pre-wrap' as const,
+};
+
+interface PdfReportProps {
+  snapshotUrl?: string;
 }
 
-export function PdfReport() {
+export function PdfReport({ snapshotUrl }: PdfReportProps) {
   const config = useConfigStore();
+  const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const totalPrice = config.price * config.quantity;
 
-  const formatPrice = (p: number) => `$${p.toFixed(2)}`;
-  const MAX_SVG_WIDTH = 450;
-  const MAX_SVG_HEIGHT = 250;
-  const L = config.l;
-  const W = config.w;
-  const scale = Math.min(MAX_SVG_WIDTH / L, MAX_SVG_HEIGHT / W);
-  const drawW = L * scale;
-  const drawH = W * scale;
-  const cx = MAX_SVG_WIDTH / 2;
-  const cy = MAX_SVG_HEIGHT / 2;
-  const rectX = cx - drawW / 2;
-  const rectY = cy - drawH / 2;
+  // Same header treatment as the chimney cap configurator: the logo sheet is
+  // cropped at runtime into a separate symbol + wordmark (getCroppedLogo);
+  // falls back to the full logo image until the crop resolves.
+  const [logoAssets, setLogoAssets] = useState<{ symbol: string; text: string } | null>(null);
 
-  const renderHoles = () => {
-    const ids: Array<'A' | 'B' | 'C'> = [];
-    if (config.holes >= 1) ids.push('A');
-    if (config.holes >= 2) ids.push('B');
-    if (config.holes === 3) ids.push('C');
+  useEffect(() => {
+    getCroppedLogo().then(setLogoAssets);
+  }, []);
 
-    return ids.map(id => {
-      const collar = id === 'A' ? config.collarA : id === 'B' ? config.collarB : config.collarC;
-      const hole = holeWorld(id, config);
-      const offsets = getHoleEdgeOffsets(hole, config);
-      const centerFromLeft = config.l / 2 - hole.wz / SC;
-      const centerFromTop = config.w / 2 + hole.wx / SC;
-      const hx = rectX + centerFromLeft * scale;
-      const hy = rectY + centerFromTop * scale;
-      const widthPx = (hole.sizeZ / SC) * scale;
-      const heightPx = (hole.sizeX / SC) * scale;
-      const showArrows = !collar.centered;
+  const logoBlock = logoAssets ? (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'center' }}>
+      <img
+        src={logoAssets.symbol}
+        alt="Kaminos Logo Mark"
+        style={{ height: '32px', display: 'block' }}
+      />
+      <img
+        src={logoAssets.text}
+        alt="Kaminos"
+        style={{ height: '20px', display: 'block' }}
+      />
+    </div>
+  ) : (
+    <img
+      src={KAMINOS_LOGO_WHITE}
+      alt="Kaminos"
+      width={171}
+      height={61}
+      style={{ width: '171px', height: '61px', display: 'block' }}
+    />
+  );
 
-      return (
-        <g key={id} data-x={centerFromLeft} data-y={centerFromTop}>
-          {showArrows && (
-            <>
-              <line x1={rectX} y1={hy} x2={hx - widthPx / 2 - 2} y2={hy} stroke="#888" strokeWidth="1" markerEnd="url(#arrow)" markerStart="url(#arrow)" />
-              <text x={rectX + ((offsets.left * scale) / 2)} y={hy - 4} fontSize="10" fill="#666" textAnchor="middle">{id}4: {offsets.left}"</text>
+  const HERO_MAX_W = 440;
+  const HERO_MAX_H = 230;
+  const [heroDims, setHeroDims] = useState<{ w: number; h: number } | null>(null);
 
-              <line x1={hx} y1={rectY + drawH} x2={hx} y2={hy + heightPx / 2 + 2} stroke="#888" strokeWidth="1" markerEnd="url(#arrow)" markerStart="url(#arrow)" />
-              <text x={hx + 4} y={rectY + drawH - ((offsets.bottom * scale) / 2)} fontSize="10" fill="#666" alignmentBaseline="middle">{id}3: {offsets.bottom}"</text>
-            </>
-          )}
+  function onHeroLoad(e: React.SyntheticEvent<HTMLImageElement>) {
+    const img = e.currentTarget;
+    const nw = img.naturalWidth;
+    const nh = img.naturalHeight;
+    if (!nw || !nh) return;
+    const r = Math.min(HERO_MAX_W / nw, HERO_MAX_H / nh);
+    setHeroDims({ w: Math.round(nw * r), h: Math.round(nh * r) });
+  }
 
-          {collar.shape === 'rect' ? (
-            <rect
-              x={hx - widthPx / 2}
-              y={hy - heightPx / 2}
-              width={widthPx}
-              height={heightPx}
-              fill="white"
-              stroke="black"
-              strokeWidth="2"
-            />
-          ) : (
-            <circle cx={hx} cy={hy} r={(hole.radius / SC) * scale} fill="white" stroke="black" strokeWidth="2" />
-          )}
-          <text x={hx} y={hy + 4} fontSize="12" fontWeight="bold" textAnchor="middle" fill="black">{id}</text>
-        </g>
-      );
-    });
+  const getMaterialName = (mat: 'galvanized' | 'stainless' | 'copper') => {
+    if (mat === 'copper') return 'Copper';
+    if (mat === 'stainless') return 'Stainless Steel';
+    return 'Galvanized Steel';
   };
 
-  return (
-    <div
-      id="print-mount"
-      style={{
-        width: '800px',
-        padding: '50px',
-        background: 'white',
-        color: '#111',
-        fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif'
-      }}
-    >
-      <div style={{ textAlign: 'center', marginBottom: '30px', borderBottom: '2px solid #333', paddingBottom: '20px' }}>
-        <h1 style={{ margin: 0, fontSize: '36px', fontWeight: '900', letterSpacing: '2px' }}>KAMINOS</h1>
-        <h2 style={{ margin: '10px 0 0 0', fontSize: '18px', fontWeight: 'normal', color: '#555' }}>Chase Cover Specification & Pricing Worksheet</h2>
-        <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: '20px', fontSize: '14px', color: '#666' }}>
-          <div><strong>Date:</strong> {new Date().toLocaleDateString()}</div>
-        </div>
-      </div>
+  const renderCollarOffsets = (id: 'A' | 'B' | 'C', collar: CollarState) => {
+    if (collar.centered) return 'Centered';
+    return `${id} Top: ${formatFrac(collar.offset3)}", ${id} Right: ${formatFrac(collar.offset4)}", ${id} Bottom: ${formatFrac(collar.offset1)}", ${id} Left: ${formatFrac(collar.offset2)}"`;
+  };
 
-      <div style={{ display: 'flex', gap: '40px' }}>
-        <div style={{ flex: '1.2' }}>
-          <div style={{ marginBottom: '25px' }}>
-            <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', textTransform: 'uppercase', letterSpacing: '1px', color: '#555', borderBottom: '1px solid #ddd', paddingBottom: '5px' }}>Configuration Blueprint</h3>
-            <div style={{ border: '2px solid #222', padding: '15px' }}>
-              <svg width={MAX_SVG_WIDTH} height={MAX_SVG_HEIGHT} style={{ display: 'block', margin: '0 auto' }}>
-                <defs>
-                  <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#888" />
-                  </marker>
-                </defs>
-                <rect x={rectX} y={rectY} width={drawW} height={drawH} fill="#f8f9fa" stroke="#222" strokeWidth="2" />
-                {renderHoles()}
-                <text x={cx} y={rectY - 14} fontSize="13" fontWeight="bold" textAnchor="middle" fill="#444">L: {config.l}"</text>
-                <text x={rectX - 14} y={cy} fontSize="13" fontWeight="bold" textAnchor="middle" fill="#444" transform={`rotate(-90 ${rectX - 14} ${cy})`}>W: {config.w}"</text>
-              </svg>
+  function renderHoleDetails(id: 'A' | 'B' | 'C', collar: CollarState) {
+    const sizeStr = collar.shape === 'round'
+      ? `${collar.dia}" Dia`
+      : `${collar.rectLength}" L x ${collar.rectWidth}" W`;
+
+    return (
+      <div key={id} style={{ marginTop: '12px' }}>
+        <div style={{ fontSize: '11px', fontWeight: 700, color: C.gold, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          Hole {id === 'A' ? '1' : id === 'B' ? '2' : '3'} ({collar.shape === 'round' ? 'Round' : 'Rectangle'})
+        </div>
+        <SpecList>
+          <SpecRow label="Size" value={sizeStr} />
+          <SpecRow label="Collar Height" value={`${collar.height}"`} />
+          {collar.shape === 'round' && (
+            <SpecRow label="Storm Collar" value={collar.stormCollar ? 'Yes' : 'No'} />
+          )}
+          <SpecRow label="Position" value={renderCollarOffsets(id, collar)} />
+        </SpecList>
+      </div>
+    );
+  }
+
+  const isMultiPage = config.holes > 1;
+
+  if (isMultiPage) {
+    return (
+      <div id="print-mount" style={{ display: 'flex', flexDirection: 'column', gap: '20px', backgroundColor: '#e4e2de' }}>
+        
+        {/* ── PAGE 1 ── */}
+        <div className="pdf-page-render" style={pageStyle}>
+          {/* Header */}
+          <header style={headerStyle}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'flex-start' }}>
+              {logoBlock}
+              <div style={{ fontSize: '20px', letterSpacing: '0.18em', textTransform: 'uppercase', color: C.gold, fontWeight: 600, textAlign: 'left' }}>
+                Chase Cover Specification
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', letterSpacing: '0.02em' }}>{dateStr}</div>
+              <div style={{ fontSize: '12px', color: C.metaUrl, letterSpacing: '0.04em' }}>kaminos.com</div>
+            </div>
+          </header>
+
+          {/* Snapshot Hero Image */}
+          <SnapshotBlock snapshotUrl={snapshotUrl} heroDims={heroDims} onHeroLoad={onHeroLoad} />
+
+          <div style={{ height: '1px', background: C.hair, margin: '0 53px' }} />
+
+          {/* Page 1 Body */}
+          <div style={{ flex: '1 1 auto', padding: '28px 53px 28px', display: 'flex', flexDirection: 'row', gap: '60px', alignItems: 'flex-start' }}>
+            {/* Left Column: General Dimensions */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div>
+                <SectionLabel>Dimensions</SectionLabel>
+                <SpecList>
+                  <SpecRow label="Width" value={`${config.w}"`} />
+                  <SpecRow label="Length" value={`${config.l}"`} />
+                  <SpecRow label="Skirt Size" value={`${config.sk}"`} />
+                  <SpecRow label="Diagonal Creases" value={config.diag ? 'Yes' : 'No'} />
+                  <SpecRow label="Drip Edge" value={config.drip ? 'Yes' : 'No'} />
+                </SpecList>
+              </div>
+
+              {/* Hole 1 Details */}
+              <div>
+                <SectionLabel>Holes Details</SectionLabel>
+                {renderHoleDetails('A', config.collarA)}
+              </div>
+            </div>
+
+            {/* Right Column: Material & Finish */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div>
+                <SectionLabel>Material &amp; Finish</SectionLabel>
+                <SpecList>
+                  <SpecRow label="Material" value={getMaterialName(config.mat)} />
+                  <SpecRow label="Gauge" value={`${config.gauge} Gauge`} />
+                  <SpecRow label="Powder Coat" value={config.pc ? 'Yes' : 'No'} />
+                </SpecList>
+
+                {config.pc && config.pcCol && (
+                  <PowderCoatColorCard color={config.pcCol} />
+                )}
+              </div>
             </div>
           </div>
 
-          <div style={{ fontSize: '14px', lineHeight: '1.8' }}>
-            <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', textTransform: 'uppercase', letterSpacing: '1px', color: '#555', borderBottom: '1px solid #ddd', paddingBottom: '5px' }}>Specifications</h3>
+          {/* Footer */}
+          <FooterBlock pageNum="Page 1 of 2" />
+        </div>
 
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '15px' }}>
-              <tbody>
-                <tr>
-                  <td style={{ padding: '4px 0', width: '35%', color: '#666' }}>Dimensions</td>
-                  <td style={{ padding: '4px 0', fontWeight: '500' }}>{config.w}" W &times; {config.l}" L &times; {config.sk}" Skirt</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: '4px 0', color: '#666' }}>Skirt Options</td>
-                  <td style={{ padding: '4px 0', fontWeight: '500' }}>{config.drip ? 'Drip Edge' : 'No Drip Edge'} &nbsp;|&nbsp; {config.diag ? 'Crossbreak' : 'Flat'}</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: '4px 0', color: '#666' }}>Material</td>
-                  <td style={{ padding: '4px 0', fontWeight: '500' }}>{config.gauge} Ga. {config.mat === 'copper' ? 'Copper' : 'Stainless Steel'}</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: '4px 0', color: '#666' }}>Powder Coat</td>
-                  <td style={{ padding: '4px 0', fontWeight: '500' }}>{config.pc ? `Yes (${config.pcCol})` : 'No'}</td>
-                </tr>
-              </tbody>
-            </table>
+        {/* ── PAGE 2 ── */}
+        <div className="pdf-page-render" style={pageStyle}>
+          {/* Header */}
+          <header style={headerStyle}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'flex-start' }}>
+              {logoBlock}
+              <div style={{ fontSize: '20px', letterSpacing: '0.18em', textTransform: 'uppercase', color: C.gold, fontWeight: 600, textAlign: 'left' }}>
+                Chase Cover Specification <span style={{ color: C.goldSoft, fontSize: '14px', textTransform: 'none', marginLeft: '10px' }}>(Continued)</span>
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', letterSpacing: '0.02em' }}>{dateStr}</div>
+              <div style={{ fontSize: '12px', color: C.metaUrl, letterSpacing: '0.04em' }}>kaminos.com</div>
+            </div>
+          </header>
 
-            {config.holes > 0 && (
-              <>
-                <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', textTransform: 'uppercase', letterSpacing: '1px', color: '#555', borderBottom: '1px solid #ddd', paddingBottom: '5px' }}>Hole Details</h3>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <tbody>
-                    {config.holes >= 1 && (
-                      <tr>
-                        <td style={{ padding: '4px 0', width: '15%', fontWeight: 'bold' }}>Hole A</td>
-                        <td style={{ padding: '4px 0' }}>{formatHoleDetails(config.collarA)} {!config.collarA.centered && <span style={{ color: '#666', fontSize: '12px' }}>- Offset (A4: {config.collarA.offset2}", A3: {config.collarA.offset1}")</span>}</td>
-                      </tr>
-                    )}
-                    {config.holes >= 2 && (
-                      <tr>
-                        <td style={{ padding: '4px 0', fontWeight: 'bold' }}>Hole B</td>
-                        <td style={{ padding: '4px 0' }}>{formatHoleDetails(config.collarB)} {!config.collarB.centered && <span style={{ color: '#666', fontSize: '12px' }}>- Offset (B4: {config.collarB.offset2}", B3: {config.collarB.offset1}")</span>}</td>
-                      </tr>
-                    )}
-                    {config.holes === 3 && (
-                      <tr>
-                        <td style={{ padding: '4px 0', fontWeight: 'bold' }}>Hole C</td>
-                        <td style={{ padding: '4px 0' }}>{formatHoleDetails(config.collarC)} {!config.collarC.centered && <span style={{ color: '#666', fontSize: '12px' }}>- Offset (C4: {config.collarC.offset2}", C3: {config.collarC.offset1}")</span>}</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </>
+          {/* Page 2 Body */}
+          <div style={{ flex: '1 1 auto', padding: '40px 53px 28px', display: 'flex', flexDirection: 'row', gap: '60px', alignItems: 'flex-start' }}>
+            {/* Left Column: Remaining Holes & Notes */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div>
+                <SectionLabel>Holes Details (Continued)</SectionLabel>
+                {config.holes >= 2 && renderHoleDetails('B', config.collarB)}
+                {config.holes === 3 && renderHoleDetails('C', config.collarC)}
+              </div>
+
+              {config.notes && (
+                <div>
+                  <SectionLabel>Special Notes</SectionLabel>
+                  <div style={notesCardStyle}>
+                    {config.notes}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Right Column: Pricing Summary */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <PricingCard config={config} totalPrice={totalPrice} />
+            </div>
+          </div>
+
+          {/* Footer */}
+          <FooterBlock pageNum="Page 2 of 2" />
+        </div>
+
+      </div>
+    );
+  }
+
+  // Single Page rendering
+  return (
+    <div id="print-mount" className="pdf-page-render" style={pageStyle}>
+      <header style={headerStyle}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'flex-start' }}>
+          {logoBlock}
+          <div style={{ fontSize: '20px', letterSpacing: '0.18em', textTransform: 'uppercase', color: C.gold, fontWeight: 600, textAlign: 'left' }}>
+            Chase Cover Specification
+          </div>
+        </div>
+        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', letterSpacing: '0.02em' }}>{dateStr}</div>
+          <div style={{ fontSize: '12px', color: C.metaUrl, letterSpacing: '0.04em' }}>kaminos.com</div>
+        </div>
+      </header>
+
+      <SnapshotBlock snapshotUrl={snapshotUrl} heroDims={heroDims} onHeroLoad={onHeroLoad} />
+
+      <div style={{ height: '1px', background: C.hair, margin: '0 53px' }} />
+
+      <div style={{ flex: '1 1 auto', padding: '28px 53px 28px', display: 'flex', flexDirection: 'row', gap: '60px', alignItems: 'flex-start' }}>
+        {/* Left Column */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div>
+            <SectionLabel>Dimensions</SectionLabel>
+            <SpecList>
+              <SpecRow label="Width" value={`${config.w}"`} />
+              <SpecRow label="Length" value={`${config.l}"`} />
+              <SpecRow label="Skirt Size" value={`${config.sk}"`} />
+              <SpecRow label="Diagonal Creases" value={config.diag ? 'Yes' : 'No'} />
+              <SpecRow label="Drip Edge" value={config.drip ? 'Yes' : 'No'} />
+            </SpecList>
+          </div>
+
+          {config.holes > 0 && (
+            <div>
+              <SectionLabel>Holes Details</SectionLabel>
+              {renderHoleDetails('A', config.collarA)}
+            </div>
+          )}
+
+          {config.notes && (
+            <div>
+              <SectionLabel>Special Notes</SectionLabel>
+              <div style={notesCardStyle}>
+                {config.notes}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right Column */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div>
+            <SectionLabel>Material &amp; Finish</SectionLabel>
+            <SpecList>
+              <SpecRow label="Material" value={getMaterialName(config.mat)} />
+              <SpecRow label="Gauge" value={`${config.gauge} Gauge`} />
+              <SpecRow label="Powder Coat" value={config.pc ? 'Yes' : 'No'} />
+            </SpecList>
+
+            {config.pc && config.pcCol && (
+              <PowderCoatColorCard color={config.pcCol} />
             )}
           </div>
-        </div>
 
-        <div style={{ flex: '0.8', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ border: '2px solid #222', borderRadius: '4px', overflow: 'hidden' }}>
-            <div style={{ background: '#222', color: '#fff', padding: '12px 15px', fontWeight: 'bold', fontSize: '14px', letterSpacing: '1px', textTransform: 'uppercase' }}>
-              Price Breakdown
-            </div>
-            <div style={{ padding: '20px 15px', fontSize: '14px' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
-                <tbody>
-                  <tr>
-                    <td style={{ padding: '6px 0', color: '#444' }}>Base Chase Cover</td>
-                    <td style={{ padding: '6px 0', textAlign: 'right', fontWeight: '500' }}>Included</td>
-                  </tr>
-                  {config.holes > 0 && (
-                    <tr>
-                      <td style={{ padding: '6px 0', color: '#444' }}>Holes / Collars (&times;{config.holes})</td>
-                      <td style={{ padding: '6px 0', textAlign: 'right', fontWeight: '500' }}>Added</td>
-                    </tr>
-                  )}
-                  {config.sk > 3 && (
-                    <tr>
-                      <td style={{ padding: '6px 0', color: '#444' }}>Extended Skirt ({config.sk}")</td>
-                      <td style={{ padding: '6px 0', textAlign: 'right', fontWeight: '500' }}>Added</td>
-                    </tr>
-                  )}
-                  {config.pc && (
-                    <tr>
-                      <td style={{ padding: '6px 0', color: '#444' }}>Powder Coating</td>
-                      <td style={{ padding: '6px 0', textAlign: 'right', fontWeight: '500' }}>Added</td>
-                    </tr>
-                  )}
-                  {config.mat === 'copper' && (
-                    <tr>
-                      <td style={{ padding: '6px 0', color: '#444' }}>Premium Material (Copper)</td>
-                      <td style={{ padding: '6px 0', textAlign: 'right', fontWeight: '500' }}>Added</td>
-                    </tr>
-                  )}
-                  <tr>
-                    <td style={{ padding: '6px 0', color: '#444' }}>Gauge Multiplier ({config.gauge} Ga.)</td>
-                    <td style={{ padding: '6px 0', textAlign: 'right', fontWeight: '500' }}>Applied</td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <div style={{ borderTop: '1px solid #ddd', margin: '15px 0' }} />
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <span style={{ fontSize: '14px', color: '#555', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Unit Price</span>
-                <span style={{ fontSize: '18px', fontWeight: 'bold' }}>{formatPrice(config.price)}</span>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                <span style={{ fontSize: '14px', color: '#555', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Quantity</span>
-                <span style={{ fontSize: '16px', fontWeight: 'bold' }}>{config.quantity}</span>
-              </div>
-
-              <div style={{ borderTop: '2px solid #222', margin: '15px 0' }} />
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8f9fa', padding: '15px', borderRadius: '4px', border: '1px solid #eee' }}>
-                <span style={{ fontSize: '16px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>Total</span>
-                <span style={{ fontSize: '24px', fontWeight: '900', color: '#111' }}>{formatPrice(config.price * config.quantity)}</span>
-              </div>
-            </div>
-          </div>
+          <PricingCard config={config} totalPrice={totalPrice} />
         </div>
       </div>
+
+      <FooterBlock />
+    </div>
+  );
+}
+
+// Inline Helper Blocks
+
+function SnapshotBlock({ snapshotUrl, heroDims, onHeroLoad }: { snapshotUrl?: string; heroDims: any; onHeroLoad: any }) {
+  return (
+    <div style={{ flexShrink: 0, padding: '24px 53px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {snapshotUrl ? (
+        <img
+          src={snapshotUrl}
+          alt="Configured chase cover"
+          id="pdf-hero-image"
+          onLoad={onHeroLoad}
+          style={
+            heroDims
+              ? { width: `${heroDims.w}px`, height: `${heroDims.h}px`, display: 'block' }
+              : { maxWidth: '440px', maxHeight: '230px', width: 'auto', height: 'auto', display: 'block' }
+          }
+        />
+      ) : (
+        <div style={{ padding: '60px', textAlign: 'center', color: C.muted, fontSize: '13px' }}>
+          3D preview not available
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PowderCoatColorCard({ color }: { color: string }) {
+  return (
+    <div style={{ marginTop: '14px', padding: '11px 14px', background: C.cardBg, borderRadius: '6px', border: `1px solid ${C.hair}`, display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div style={{ width: '28px', height: '28px', borderRadius: '4px', background: color, border: '1px solid rgba(0,0,0,0.12)', flexShrink: 0 }} />
+      <div>
+        <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: C.label }}>
+          Powder Coat Color
+        </div>
+        <div style={{ fontSize: '12px', color: '#444', fontWeight: 600 }}>
+          {color.toUpperCase()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PricingCard({ config, totalPrice }: { config: any; totalPrice: number }) {
+  return (
+    <div style={{ border: `1.5px solid ${C.gold}`, borderRadius: '10px', background: C.cardBg, padding: '20px 20px 18px', marginTop: 'auto' }}>
+      <div style={{ fontSize: '12.5px', letterSpacing: '0.18em', textTransform: 'uppercase', color: C.gold, fontWeight: 600, paddingBottom: '6px', borderBottom: `1px solid ${C.goldSoft}`, marginBottom: '19px' }}>
+        Pricing &amp; Summary
+      </div>
+      <PriceRow label="Unit Price" value={`$${config.price.toFixed(2)}`} />
+      <PriceRow label="Quantity" value={String(config.quantity)} />
+      <hr style={{ border: 'none', borderTop: `1.5px dashed ${C.goldSoft}`, margin: '19px 0' }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontSize: '14.5px', letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 600, color: C.ink }}>
+          Total Price
+        </span>
+        <span style={{ fontSize: '30px', fontWeight: 700, color: C.ink, letterSpacing: '0.01em' }}>
+          ${totalPrice.toFixed(2)}
+        </span>
+      </div>
+      <div style={{ fontSize: '11px', color: C.muted, textAlign: 'right', marginTop: '14px', fontStyle: 'italic' }}>
+        *Estimate based on configuration
+      </div>
+    </div>
+  );
+}
+
+// pageNum is only shown on multi-page exports ("Page 1 of 2" etc.); single-page
+// exports omit it, matching the cap configurator's footer.
+function FooterBlock({ pageNum }: { pageNum?: string }) {
+  return (
+    <footer style={{ marginTop: 'auto', background: C.footerBg, borderTop: `1px solid ${C.hair}`, padding: '23px 53px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+      <div style={{ fontSize: '11.5px', color: C.muted, letterSpacing: '0.01em' }}>
+        This document is for reference only. Final pricing subject to confirmation.
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+        {pageNum && <span style={{ fontSize: '11px', fontWeight: 600, color: C.gold, letterSpacing: '0.05em' }}>{pageNum}</span>}
+        <span style={{ fontSize: '11.5px', color: '#7A766F', letterSpacing: '0.03em' }}>
+          kaminos.com · 1-888-777-9789
+        </span>
+      </div>
+    </footer>
+  );
+}
+
+// Inline Subcomponents
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: '13px', letterSpacing: '0.20em', textTransform: 'uppercase', color: C.gold, fontWeight: 600, paddingBottom: '6px', marginBottom: '2px', borderBottom: `1px solid ${C.hairStrong}` }}>
+      {children}
+    </div>
+  );
+}
+
+function SpecList({ children }: { children: React.ReactNode }) {
+  return <div style={{ display: 'flex', flexDirection: 'column' }}>{children}</div>;
+}
+
+function SpecRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '8px 0', borderBottom: `1px solid ${C.hair}` }}>
+      <span style={{ fontSize: '14px', color: C.label, fontWeight: 400, letterSpacing: '0.01em' }}>{label}</span>
+      <span style={{ fontSize: '15px', color: C.value, fontWeight: 600, letterSpacing: '0.01em', textAlign: 'right', paddingLeft: '30px' }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function PriceRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '5px 0' }}>
+      <span style={{ fontSize: '14px', color: C.label }}>{label}</span>
+      <span style={{ fontSize: '15px', color: C.value, fontWeight: 600 }}>{value}</span>
     </div>
   );
 }

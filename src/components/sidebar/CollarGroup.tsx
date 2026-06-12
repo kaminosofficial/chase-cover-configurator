@@ -598,14 +598,14 @@ export function CollarGroup({ id, label }: Props) {
         <div className="offset-grid">
           <div className="field-row">
             <CollarInput
-              label={`${id}1 (Top edge -> hole)`}
+              label={`${id}1 (Top edge → hole)`}
               value={collar.offset3}
               min={0}
               max={maxW}
               onCommit={commitTop}
             />
             <CollarInput
-              label={`${id}3 (Bottom edge -> hole)`}
+              label={`${id}3 (Bottom edge → hole)`}
               value={collar.offset1}
               min={0}
               max={maxW}
@@ -614,14 +614,14 @@ export function CollarGroup({ id, label }: Props) {
           </div>
           <div className="field-row">
             <CollarInput
-              label={`${id}2 (Right edge -> hole)`}
+              label={`${id}2 (Right edge → hole)`}
               value={collar.offset4}
               min={0}
               max={maxL}
               onCommit={commitRight}
             />
             <CollarInput
-              label={`${id}4 (Left edge -> hole)`}
+              label={`${id}4 (Left edge → hole)`}
               value={collar.offset2}
               min={0}
               max={maxL}

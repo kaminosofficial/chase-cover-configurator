@@ -743,6 +743,61 @@ header {
   100% { transform: translateX(310%); }
 }
 
+/* ---- Cart progress overlay (Add to Cart / Buy with Shop in flight) ---- */
+.cart-progress-overlay {
+  position: absolute; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(247, 244, 239, 0.66);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: cart-overlay-in 0.25s ease-out both;
+  /* Block scroll/zoom gestures while in flight (matters on the mobile fixed overlay). */
+  touch-action: none;
+}
+/* Mobile: the stacked configurator is taller than the screen, so an absolute
+   overlay centers its card off-viewport (user had to scroll up to find it).
+   Anchor to the viewport instead — the card appears over whatever is on screen.
+   App.tsx raises the shadow host's z-index chain while this is open so theme
+   headers/sections can't paint over it on the Shopify embed. */
+@media (max-width: 767px) {
+  .cart-progress-overlay { position: fixed; z-index: 2147483000; }
+}
+@keyframes cart-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+.cart-progress-card {
+  width: min(340px, calc(100% - 40px));
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-card);
+  box-shadow: 0 18px 50px rgba(47, 41, 36, 0.16);
+  padding: 22px 24px 18px;
+  animation: cart-card-in 0.3s ease-out both;
+}
+@keyframes cart-card-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+.cart-progress-title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 14px; }
+.cart-progress-steplist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 11px; }
+.cart-progress-item { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--text-helper); transition: color 0.25s; }
+.cart-progress-item.is-active { color: var(--text); font-weight: 500; }
+.cart-progress-item.is-done { color: var(--text-muted); }
+.cart-progress-dot {
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--border);
+  background: #fff; color: #fff;
+  transition: background-color 0.25s, border-color 0.25s;
+}
+.cart-progress-item.is-done .cart-progress-dot { background: var(--primary); border-color: var(--primary); }
+.cart-progress-item.is-active .cart-progress-dot { border-color: var(--primary); }
+.cart-progress-spin {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid rgba(122, 90, 47, 0.25);
+  border-top-color: var(--primary);
+  animation: pdf-spin 0.75s linear infinite;
+}
+.cart-progress-note { margin-top: 14px; font-size: 11.5px; line-height: 1.5; color: var(--text-helper); }
+
 .buy-now-btn {
   flex: 1; padding: 12px 18px; background: #5a31f4; border: 1px solid #5a31f4;
   border-radius: 6px; color: #fff; font-family: var(--sans);
@@ -1330,5 +1385,59 @@ header {
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
+
+/* ---- Export PDF button (above cart row) ---- */
+.export-pdf-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 42px;
+  margin-bottom: 10px;
+  background: #fff;
+  border: 1px solid rgba(18, 18, 18, 0.12);
+  border-radius: 6px;
+  color: rgb(18, 18, 18);
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.18s, color 0.15s, box-shadow 0.15s;
+  letter-spacing: 0.01em;
+}
+.export-pdf-btn:hover {
+  background: #faf6ef;
+  border-color: rgb(209, 179, 130);
+  color: rgb(180, 140, 80);
+  box-shadow: 0 1px 4px rgba(209, 179, 130, 0.18);
+}
+.export-pdf-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Inline variant — sits on the price line, right of the total (local-only) */
+.export-pdf-btn--inline {
+  width: auto;
+  height: 34px;
+  margin-bottom: 0;
+  padding: 0 14px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+/* ---- PDF capture spinner ---- */
+.pdf-capture-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(209, 179, 130, 0.2);
+  border-top-color: rgb(209, 179, 130);
+  border-radius: 50%;
+  animation: pdf-spin 0.75s linear infinite;
+}
+@keyframes pdf-spin {
+  to { transform: rotate(360deg); }
 }
 

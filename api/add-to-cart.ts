@@ -345,7 +345,6 @@ async function shopifyGraphQL(query: string, accessToken: string, variables?: Re
 
 /* ---- Caches for product metadata ---- */
 const cachedOptionNames = new Map<string, string>();
-const cachedProductHandles = new Map<string, string>();
 
 async function getProductOptionName(productId: string, accessToken: string): Promise<string> {
     const cachedOptionName = cachedOptionNames.get(productId);
@@ -368,116 +367,6 @@ async function getProductOptionName(productId: string, accessToken: string): Pro
         console.warn('[CART] Failed to get option name in', Date.now() - t0, 'ms:', e.message);
     }
     return 'Title'; // Shopify's default option name
-}
-
-/* ---- Cache for product handle ---- */
-
-async function getProductHandle(productId: string, accessToken: string): Promise<string | null> {
-    const cachedProductHandle = cachedProductHandles.get(productId);
-    if (cachedProductHandle) return cachedProductHandle;
-
-    const t0 = Date.now();
-    try {
-        const res = await fetch(
-            `https://${SHOPIFY_STORE}/admin/api/2025-10/products/${productId}.json?fields=handle`,
-            { headers: { 'X-Shopify-Access-Token': accessToken } }
-        );
-        if (!res.ok) {
-            console.warn('[CART] getProductHandle failed:', res.status, 'in', Date.now() - t0, 'ms');
-            return null;
-        }
-        const data = await res.json();
-        const handle = data?.product?.handle;
-        console.log('[CART] getProductHandle:', handle, 'in', Date.now() - t0, 'ms');
-        if (handle) {
-            cachedProductHandles.set(productId, handle);
-            return handle;
-        }
-    } catch (e: any) {
-        console.warn('[CART] Failed to get product handle in', Date.now() - t0, 'ms:', e.message);
-    }
-    return null;
-}
-
-/* ---- Storefront propagation check ---- */
-
-/**
- * After creating a new variant via Admin API, the Shopify storefront has an
- * eventual consistency delay (~9-10s average) before /cart/add.js accepts it.
- *
- * This function polls the storefront's /cart/add.js directly — the definitive
- * test of purchasability. A stateless POST (no cookies) creates an ephemeral
- * anonymous cart that Shopify garbage-collects automatically.
- *
- * Once the variant appears in the product JSON with the correct price, the
- * client's /cart/add.js call will succeed immediately (both endpoints reflect
- * the same storefront propagation state for browser clients).
- *
- * IMPORTANT: Uses the customer-facing storefront domain (e.g. kaminos.com),
- * NOT the .myshopify.com admin domain, because propagation is faster on the
- * custom domain. Uses the lightweight GET /products/{handle}.json endpoint
- * instead of POST /cart/add.js to avoid storefront rate limits (429).
- */
-async function waitForStorefrontPropagation(
-    variantId: string,
-    expectedPrice: string,
-    storefrontDomain: string,
-    productHandle: string | null,
-    maxWaitMs: number = 18000,
-    intervalMs: number = 1500
-): Promise<boolean> {
-    if (!productHandle) {
-        console.warn('[PROP] No product handle — skipping propagation check');
-        return false;
-    }
-
-    const start = Date.now();
-    const numericId = Number(variantId);
-    let attempt = 0;
-
-    console.log(`[PROP] Polling https://${storefrontDomain}/products/${productHandle}.json for variant ${variantId} at $${expectedPrice}`);
-
-    while (Date.now() - start < maxWaitMs) {
-        attempt++;
-        // Wait before each poll (including the first — give Shopify initial propagation time)
-        await new Promise(r => setTimeout(r, attempt === 1 ? 1000 : intervalMs));
-
-        try {
-            const url = `https://${storefrontDomain}/products/${productHandle}.json?v=${Date.now()}`;
-            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-
-            if (res.status === 429) {
-                console.log(`[PROP] Poll ${attempt}: rate limited (429) — waiting 3s (${Date.now() - start}ms)`);
-                await new Promise(r => setTimeout(r, 3000));
-                continue;
-            }
-
-            if (!res.ok) {
-                console.warn(`[PROP] Poll ${attempt}: HTTP ${res.status} (${Date.now() - start}ms)`);
-                continue;
-            }
-
-            const data = await res.json();
-            const variants = data?.product?.variants;
-            if (!Array.isArray(variants)) continue;
-
-            const found = variants.find((v: any) => v.id === numericId);
-            if (found && found.price === expectedPrice) {
-                console.log(`[PROP] Variant ${variantId} visible at $${expectedPrice} after ${Date.now() - start}ms (${attempt} polls)`);
-                return true;
-            }
-
-            if (attempt <= 3 || attempt % 4 === 0) {
-                const status = found ? `price=${found.price}` : 'not found';
-                console.log(`[PROP] Poll ${attempt}: variant ${status} (${Date.now() - start}ms)`);
-            }
-        } catch (e: any) {
-            console.warn(`[PROP] Poll ${attempt} error: ${e.message}`);
-        }
-    }
-
-    console.warn(`[PROP] Timed out after ${Date.now() - start}ms (${attempt} polls)`);
-    return false;
 }
 
 /* ---- Create variant via GraphQL (tracked=false in single call) ---- */
@@ -621,19 +510,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         warnUnknownOrigin(req.headers.origin as string | undefined, 'CART');
 
-        // Extract storefront domain from request origin/referer.
-        // The .myshopify.com admin domain has much slower propagation than the
-        // custom storefront domain (kaminos.com), so we MUST use the custom one.
-        const origin = req.headers.origin || req.headers.referer || '';
-        let storefrontDomain = '';
-        try {
-            const parsed = new URL(origin);
-            storefrontDomain = parsed.hostname;
-        } catch { /* ignore */ }
-        // Fallback: use SHOPIFY_STORE if no origin (shouldn't happen in production)
-        if (!storefrontDomain) storefrontDomain = SHOPIFY_STORE;
-        console.log('[CART] Storefront domain:', storefrontDomain);
-
         applyProductIdFallback(config);
 
         // Validate
@@ -682,12 +558,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
-        // 3. Get option name + product handle + calculate price IN PARALLEL
+        // 3. Get option name (handle fetch removed — it only fed the propagation probe)
         const t3 = Date.now();
-        const [optionName, productHandle] = await Promise.all([
-            getProductOptionName(config.shopifyProductId, accessToken),
-            getProductHandle(config.shopifyProductId, accessToken),
-        ]);
+        const optionName = await getProductOptionName(config.shopifyProductId, accessToken);
         const optionNameMs = Date.now() - t3;
 
         let stormCollarCost = 0;
@@ -697,6 +570,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (c?.stormCollar) stormCollarCost += getStormCollarPrice(c.dia, pricing.STORM_COLLAR_PRICES ?? {});
         }
         const pricingBreakdown = computePricingBreakdown(config, pricing, stormCollarCost);
+        // Guard: a zeroed/blank "Kaminos Margin" in the sheet would silently sell at
+        // cost (×1 instead of ×4). Refuse to create a purchasable variant from it.
+        if (!(pricing.MARGIN_RATE > 0)) {
+            console.error('[CART] Degraded pricing — MARGIN_RATE is', pricing.MARGIN_RATE, '— refusing to create variant');
+            return res.status(503).json({ error: 'Pricing is temporarily unavailable. Please try again in a minute.' });
+        }
         const unitPrice = pricingBreakdown.total;
         const priceStr = unitPrice.toFixed(2);
         console.log('[CART] [3] OptionName+pricing:', optionNameMs, 'ms, price:', priceStr);
@@ -709,8 +588,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const allVariants = await fetchAllVariants(config.shopifyProductId, accessToken);
         console.log(`[CART] Total variants: ${allVariants.length}/${VARIANT_LIMIT}`);
 
-        // Proactive cleanup when within 5 slots of the Shopify Basic limit
-        await proactiveCleanup(config.shopifyProductId, accessToken, allVariants);
+        // Proactive cleanup when within 5 slots of the Shopify Basic limit.
+        // Only block the request when creation would otherwise hit the 100-variant
+        // limit; below that, run concurrently (emergency-cleanup-on-422 backstops).
+        if (allVariants.length >= VARIANT_LIMIT - 1) {
+            await proactiveCleanup(config.shopifyProductId, accessToken, allVariants);
+        } else {
+            proactiveCleanup(config.shopifyProductId, accessToken, allVariants)
+                .catch(e => console.warn('[CART] Background cleanup failed:', e?.message));
+        }
 
         const existingId = findInVariants(allVariants, hash, priceStr);
         let variantId: string | undefined;
@@ -748,21 +634,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
-        // 5. Quick propagation hint (3s max — client owns the real retry loop)
-        let propagated = true;
-        let propagationMs = 0;
-        if (!existingId && variantId) {
-            const tProp = Date.now();
-            propagated = await waitForStorefrontPropagation(variantId, priceStr, storefrontDomain, productHandle, 1000, 500);
-            propagationMs = Date.now() - tProp;
-            console.log(`[CART] [5] Propagation hint: ${propagated ? 'confirmed' : 'not yet'} in ${propagationMs}ms`);
-        } else if (existingId) {
-            console.log('[CART] [5] Reused variant — skipping propagation');
-        }
+        // 5. No server-side propagation wait. The old probe polled
+        //    products/{handle}.json, which propagates ~10s AHEAD of /cart/add.js
+        //    (measured live June 2026) — so its "propagated: true" was meaningless
+        //    and it cost ~1.2s + an Admin API call per new variant. The client's
+        //    addToCartWithRetry owns the real readiness loop.
+        const propagated = !!existingId;
+        const propagationMs = 0;
 
         // 6. Build line item properties
         const properties = buildCartProperties(config);
-        const quantity = Math.max(1, Math.min(99, Math.round(config.quantity || 1)));
+        // Clamp matches the client cap (MAX_QTY = 10 in CartRow.tsx).
+        const quantity = Math.max(1, Math.min(10, Math.round(config.quantity || 1)));
 
         const totalMs = Date.now() - handlerStart;
         console.log('[CART] === DONE ===', totalMs, 'ms total | auth+pricing:', authPricingMs, '| optionName:', optionNameMs, '| variant:', variantMs, '| propagation:', propagationMs);

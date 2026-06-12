@@ -28,3 +28,13 @@ dist-ssr
 
 .env*.local
 .vercel
+
+# secrets / local tooling — never commit
+.env.vercel
+.vercel.bak/
+.understand-anything/
+.claude/worktrees/
+.claude/launch.json
+KAMINOS-Configurators-Handover*.pdf
+extract.cjs
+extracted_logo.png

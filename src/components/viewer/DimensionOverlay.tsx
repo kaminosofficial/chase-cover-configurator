@@ -76,7 +76,7 @@ export function DimensionOverlay() {
                 const dims = [
                     {
                         key: `${id}1`,
-                        label: `${id}1`,
+                        label: `${id} Top`,
                         from: [-W / 2, Y, hz] as [number, number, number],
                         to: [hx - halfX, Y, hz] as [number, number, number],
                         midX: (-W / 2 + hx - halfX) / 2,
@@ -85,7 +85,7 @@ export function DimensionOverlay() {
                     },
                     {
                         key: `${id}2`,
-                        label: `${id}2`,
+                        label: `${id} Right`,
                         from: [hx, Y, -L / 2] as [number, number, number],
                         to: [hx, Y, hz - halfZ] as [number, number, number],
                         midX: hx,
@@ -94,7 +94,7 @@ export function DimensionOverlay() {
                     },
                     {
                         key: `${id}3`,
-                        label: `${id}3`,
+                        label: `${id} Bottom`,
                         from: [W / 2, Y, hz] as [number, number, number],
                         to: [hx + halfX, Y, hz] as [number, number, number],
                         midX: (W / 2 + hx + halfX) / 2,
@@ -103,7 +103,7 @@ export function DimensionOverlay() {
                     },
                     {
                         key: `${id}4`,
-                        label: `${id}4`,
+                        label: `${id} Left`,
                         from: [hx, Y, L / 2] as [number, number, number],
                         to: [hx, Y, hz + halfZ] as [number, number, number],
                         midX: hx,
