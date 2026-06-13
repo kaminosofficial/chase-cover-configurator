@@ -176,41 +176,65 @@ export async function generatePdf(element: HTMLElement | null): Promise<Blob | n
     return null;
   }
 }
-// Delivers the generated PDF: on devices that support sharing files (iOS/Android)
-// this opens the native share sheet so the user can "Save to Files"; otherwise it
-// triggers a normal browser download. Same implementation as the cap configurator
-// (its mobile-download fixes apply here too): share payload is files+title ONLY,
-// user-cancel returns without a redundant download, and the object URL is revoked
-// on a delay — revoking synchronously after click() kills the download on iOS.
+// Delivers the generated PDF with a DIRECT download on every platform — including
+// iPhone/Safari, which supports the <a download> blob path since iOS 13 and saves
+// straight to Files (no Web Share sheet). The earlier iOS "won't download /
+// gibberish" was a SYNCHRONOUS revokeObjectURL killing the blob mid-download; that
+// is fixed by the delayed revoke in triggerDownload, so the share-sheet detour is
+// no longer needed and the client gets a direct "Save to Files".
+function isIOS(): boolean {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || '').split(',')[1] || '');
+    fr.onerror = () => reject(fr.error || new Error('FileReader failed'));
+    fr.readAsDataURL(blob);
+  });
+}
+
 export async function deliverPdf(blob: Blob, filename: string): Promise<void> {
-  const file =
-    typeof File !== 'undefined'
-      ? new File([blob], filename, { type: 'application/pdf' })
-      : null;
+  pdfDebug('deliver:start', { blobSize: blob.size, ios: isIOS() });
 
-  const nav = navigator as Navigator & {
-    canShare?: (data?: ShareData) => boolean;
-    share?: (data?: ShareData) => Promise<void>;
-  };
-
-  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const fileShareable = !!(isMobile && file && nav.canShare && nav.canShare({ files: [file] }) && nav.share);
-  pdfDebug('deliver:start', { isMobile, fileShareable, blobSize: blob.size });
-
-  if (fileShareable) {
+  // iOS Safari opens a blob <a download> INLINE (a preview the user must then save
+  // by hand). To get a true "Save to Files", POST the PDF to /api/download-pdf,
+  // which returns it with Content-Disposition: attachment. A top-level form submit
+  // makes iOS show its native download banner and save straight to Files WITHOUT
+  // navigating away (attachment responses download in place). Desktop/Android keep
+  // the direct blob download below, which already works there.
+  if (isIOS()) {
     try {
-      await nav.share!({ files: [file!], title: filename });
-      pdfDebug('deliver:share-ok');
+      const base64 = await blobToBase64(blob);
+      const apiBase = (window as any).__chaseApiBase || '';
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = `${apiBase}/api/download-pdf`;
+      form.style.display = 'none';
+      const add = (name: string, value: string) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = name;
+        input.value = value;
+        form.appendChild(input);
+      };
+      add('filename', filename);
+      add('data', base64);
+      document.body.appendChild(form);
+      form.submit();
+      setTimeout(() => { try { document.body.removeChild(form); } catch { /* already gone */ } }, 1500);
+      pdfDebug('deliver:ios-attachment');
       return;
     } catch (e) {
-      pdfDebug('deliver:share-error', { name: (e as DOMException)?.name, error: String((e as Error)?.message || e) });
-      // User cancelled, or share was blocked — fall through to download/open.
-      if ((e as DOMException)?.name === 'AbortError') return;
+      pdfDebug('deliver:ios-error', { error: String((e as Error)?.message || e) });
+      // Fall through to the blob download.
     }
   }
 
-  pdfDebug('deliver:fallback-download');
   triggerDownload(blob, filename);
+  pdfDebug('deliver:download');
 }
 
 function triggerDownload(blob: Blob, filename: string): void {
@@ -219,9 +243,14 @@ function triggerDownload(blob: Blob, filename: string): void {
   a.href = url;
   a.download = filename;
   a.rel = 'noopener';
+  // No target="_blank" — on iOS that opens the PDF inline instead of downloading.
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  // Give the browser a moment to start the download before revoking.
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  // Keep the anchor AND the object URL alive briefly. iOS Safari aborts the
+  // download (blank / "gibberish") if the blob URL is revoked — or the anchor
+  // removed — too soon after click().
+  setTimeout(() => {
+    try { document.body.removeChild(a); } catch { /* already detached */ }
+    URL.revokeObjectURL(url);
+  }, 4000);
 }
