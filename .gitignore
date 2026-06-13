@@ -38,3 +38,5 @@ dist-ssr
 KAMINOS-Configurators-Handover*.pdf
 extract.cjs
 extracted_logo.png
+/test-*.cjs
+.claude/settings.local.json
