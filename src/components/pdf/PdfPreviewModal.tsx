@@ -16,6 +16,10 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
   const [isCapturing, setIsCapturing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const didCaptureRef = useRef(false);
+  // Synchronous re-entry guard: the button's `disabled` only applies after React
+  // repaints, but generatePdf() blocks the main thread for ~2s, so without this
+  // a rapid double-tap launches concurrent generations. This blocks instantly.
+  const downloadingRef = useRef(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -65,7 +69,13 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
   }
 
   async function handleDownload() {
+    if (downloadingRef.current || isCapturing) return; // instant guard against double-taps
+    downloadingRef.current = true;
     setIsDownloading(true);
+    // Yield two frames so the browser paints the "Generating…" / disabled button
+    // BEFORE generatePdf() blocks the main thread — otherwise the click feels
+    // dead for ~2s and users re-tap.
+    await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
     try {
       const dateStr = new Date().toISOString().slice(0, 10);
       const filename = `KAMINOS-ChaseCover-${dateStr}.pdf`;
@@ -84,6 +94,7 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
       alert('Sorry, the PDF download failed. Please try again.');
     } finally {
       setIsDownloading(false);
+      downloadingRef.current = false;
     }
   }
 
