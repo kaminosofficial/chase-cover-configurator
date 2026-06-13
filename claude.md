@@ -687,6 +687,22 @@ The client sends debug events to `POST /api/cart-debug` via `emitCartDebug()`. T
 
 These are visible in Vercel function logs.
 
+### Cart failure telemetry (persistent → Google Sheet)
+
+Vercel runtime logs are **ephemeral** — `vercel logs` only tails *"from now, for 5 minutes at most"* and nothing backfills — so an intermittent Add-to-Cart / Buy-Now failure (e.g. a mobile-data drop) was impossible to diagnose after the fact (`emitCartDebug` only `console.log`s). This subsystem **durably records terminal cart failures to a Google Sheet** so they survive for review, and **correlates client ↔ server** to reveal orphaned variants (server created a variant but the client never received the response).
+
+**Flow** (added June 2026):
+1. **Client** (`src/App.tsx`): every Add/Buy flow generates a `requestId` (in the POST payload, reused across retries). `postAddToCartApi` attaches a per-attempt `attemptLog` + `failureKind` to the error it throws. On a terminal failure, both catch blocks call `recordCartFailure()`, which writes a lean record (requestId, phase, attemptLog, device, `navigator.connection`, `variantIdObtained`, config summary — **no PII / no full `_config_json`**) to a capped (`CART_FAILURE_MAX=20`) `localStorage` ring buffer (`chase-cart-failures`). **Buffered because the network may be down at failure time.**
+2. **Flush** (`flushCartFailureReports`): buffered records POST to `/api/cart-debug` with `kind:'cart-failure-report'` on **app mount**, on the **`online`** event, and **right after each failure** (in case the blip already cleared). Records are dropped from the buffer only when the server confirms `persisted:true`.
+3. **Server** (`api/cart-debug.ts`): forwards each report to the sheet via `appendCartLogRow()` (`lib/cart-log.ts`) as a `client-failure` row.
+4. **Correlation** (`api/add-to-cart.ts`): logs/echoes the `requestId`; **only on the new-variant-creation path** it `await`s an `appendCartLogRow({type:'server-variant-created', ...})` (1.5s timeout so telemetry can't extend an already-slow add). A `server-variant-created` row paired with a `client-failure` of the same `requestId` and `variantIdObtained:false` is a **confirmed orphaned variant**.
+
+**Storage**: `lib/cart-log.ts` POSTs rows to a **Google Apps Script web app** (`doPost` appends to a "Cart Log" tab). Configured via env: `CART_LOG_WEBHOOK_URL` (the web-app URL) and `CART_LOG_TOKEN` (shared secret, must match the script's `TOKEN`). **Resilient**: if either env is unset or the POST fails/times out, it falls back to `console.log` and never throws — the cart flow is unaffected. Redeploy the Apps Script web app as a **new version** after editing it.
+
+**Reading it**: open the "Cart Log" sheet tab. Columns: `at, type, requestId, action, phase, failureKind, variantId, variantIdObtained, serverTimingMs, attempts, device, connection, configSummary, errorMessage`. The `~20–40s spin then "network issue"` class of failure shows as `failureKind:'timeout'`/`'network'` with an `attempts` array whose first entry is a 30s timeout.
+
+> Deferred (recommended follow-ups, not yet built): graceful recovery UX (replace the dead-end `alert()` with a "design saved — tap to retry"; safe because the server is idempotent) and network hardening (avoid the cross-origin CORS preflight, tune the 30s client timeout, reconcile orphaned variants on retry).
+
 ### Origin Validation
 
 API handlers log warnings for requests from unknown origins via `warnUnknownOrigin()` in `lib/shopify-auth.ts`. Known origins: kaminos.com, chase-cover-configurator*.vercel.app, localhost.
