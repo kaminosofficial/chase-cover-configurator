@@ -182,8 +182,57 @@ export async function generatePdf(element: HTMLElement | null): Promise<Blob | n
 // gibberish" was a SYNCHRONOUS revokeObjectURL killing the blob mid-download; that
 // is fixed by the delayed revoke in triggerDownload, so the share-sheet detour is
 // no longer needed and the client gets a direct "Save to Files".
+function isIOS(): boolean {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || '').split(',')[1] || '');
+    fr.onerror = () => reject(fr.error || new Error('FileReader failed'));
+    fr.readAsDataURL(blob);
+  });
+}
+
 export async function deliverPdf(blob: Blob, filename: string): Promise<void> {
-  pdfDebug('deliver:start', { blobSize: blob.size });
+  pdfDebug('deliver:start', { blobSize: blob.size, ios: isIOS() });
+
+  // iOS Safari opens a blob <a download> INLINE (a preview the user must then save
+  // by hand). To get a true "Save to Files", POST the PDF to /api/download-pdf,
+  // which returns it with Content-Disposition: attachment. A top-level form submit
+  // makes iOS show its native download banner and save straight to Files WITHOUT
+  // navigating away (attachment responses download in place). Desktop/Android keep
+  // the direct blob download below, which already works there.
+  if (isIOS()) {
+    try {
+      const base64 = await blobToBase64(blob);
+      const apiBase = (window as any).__chaseApiBase || '';
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = `${apiBase}/api/download-pdf`;
+      form.style.display = 'none';
+      const add = (name: string, value: string) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = name;
+        input.value = value;
+        form.appendChild(input);
+      };
+      add('filename', filename);
+      add('data', base64);
+      document.body.appendChild(form);
+      form.submit();
+      setTimeout(() => { try { document.body.removeChild(form); } catch { /* already gone */ } }, 1500);
+      pdfDebug('deliver:ios-attachment');
+      return;
+    } catch (e) {
+      pdfDebug('deliver:ios-error', { error: String((e as Error)?.message || e) });
+      // Fall through to the blob download.
+    }
+  }
+
   triggerDownload(blob, filename);
   pdfDebug('deliver:download');
 }
