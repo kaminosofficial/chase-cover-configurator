@@ -41,7 +41,12 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    res.setHeader('Content-Type', 'application/pdf');
+    // iOS Safari PREVIEWS any content it can render (PDF included) inline and
+    // ignores `Content-Disposition: attachment`. Sending it as octet-stream — a
+    // type Safari can't preview — forces it into the download manager so it saves
+    // to Files instead of opening in the browser. The .pdf filename keeps the
+    // saved file openable as a normal PDF.
+    res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
     res.setHeader('Content-Length', String(buf.length));
     res.setHeader('Cache-Control', 'no-store');
