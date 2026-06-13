@@ -2217,6 +2217,26 @@ export default function App({ productId, variantId }: AppProps = {}) {
     };
   }, [pageOverlayActive]);
 
+  // Lock the page (light-DOM theme document) scroll while the PDF preview or
+  // RAL color picker is open, so wheel/touch over the backdrop — or an inner
+  // scroll area hitting its end — can't scroll the store page behind the modal.
+  // overscroll-behavior on the scroll containers handles chaining; this stops
+  // the backdrop case and is restored exactly on close. Scoped to these two
+  // modals only — the cart overlay/drawer manages its own scroll lock.
+  useEffect(() => {
+    if (!(pdfModalOpen || ralOpen)) return;
+    const docEl = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = docEl.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    docEl.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    return () => {
+      docEl.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+    };
+  }, [pdfModalOpen, ralOpen]);
+
   const arViewerRef = useRef<any>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
   const qrUrlRef = useRef<HTMLDivElement>(null);

@@ -109,6 +109,8 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
         justifyContent: 'flex-start',
         alignItems: 'center',
         padding: '14vh 16px 3vh',
+        // Stop wheel/touch over the backdrop from scrolling the page behind.
+        overscrollBehavior: 'contain',
       }}
       onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
     >
@@ -163,7 +165,7 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
         </div>
 
         {/* Scaled Preview Frame */}
-        <div ref={containerRef} style={{ flex: 1, overflowY: 'auto', padding: '24px 16px', backgroundColor: '#e4e2de', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', minHeight: 0 }}>
+        <div ref={containerRef} style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '24px 16px', backgroundColor: '#e4e2de', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', minHeight: 0 }}>
           {isCapturing ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '300px', gap: '16px', color: '#666', fontFamily: FONT }}>
               <div className="pdf-capture-spinner" />
