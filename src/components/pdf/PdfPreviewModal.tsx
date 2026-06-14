@@ -5,6 +5,14 @@ import { PdfReport } from './PdfReport';
 const REPORT_W = 794;
 const FONT = "'Jost', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
+// iOS doesn't download the blob directly — deliverPdf() POSTs to /api/download-pdf
+// and iOS opens its native download manager ~1s LATER. We keep the button on
+// "Generating…" across that gap (see watchForReturnFromDownload below).
+function isIOSDevice(): boolean {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
 interface PdfPreviewModalProps {
   open: boolean;
   onClose: () => void;
@@ -20,6 +28,8 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
   // repaints, but generatePdf() blocks the main thread for ~2s, so without this
   // a rapid double-tap launches concurrent generations. This blocks instantly.
   const downloadingRef = useRef(false);
+  // Cleanup fn for the iOS "wait for the download UI" listeners (see below).
+  const downloadWatchCleanupRef = useRef<(() => void) | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -49,6 +59,51 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
     };
   }, [open, snapshotUrl]);
 
+  // Tear down any pending iOS download watcher when the modal unmounts.
+  useEffect(() => () => clearDownloadWatch(), []);
+
+  function clearDownloadWatch() {
+    if (downloadWatchCleanupRef.current) {
+      downloadWatchCleanupRef.current();
+      downloadWatchCleanupRef.current = null;
+    }
+  }
+
+  // iOS keeps "Generating…" on the button until the user returns from the native
+  // download manager (page refocus / re-visible), with a safety timeout so the
+  // label can never get stuck. Without this, deliverPdf()'s form POST resolves
+  // instantly and the label flips back to "Download PDF" a beat BEFORE iOS even
+  // shows its download window — which read as confusing/flaky.
+  function watchForReturnFromDownload() {
+    clearDownloadWatch();
+    let settled = false;
+    let attachTimer = 0;
+    const reset = () => {
+      if (settled) return;
+      settled = true;
+      clearDownloadWatch();
+      setIsDownloading(false);
+      downloadingRef.current = false;
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') reset(); };
+    const safety = window.setTimeout(reset, 8000);
+    const cleanup = () => {
+      window.clearTimeout(safety);
+      window.clearTimeout(attachTimer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', reset);
+      window.removeEventListener('pageshow', reset);
+    };
+    downloadWatchCleanupRef.current = cleanup;
+    // Attach slightly late so any focus churn from form.submit() can't resolve
+    // this before the iOS download window has actually appeared (~1s).
+    attachTimer = window.setTimeout(() => {
+      document.addEventListener('visibilitychange', onVisible);
+      window.addEventListener('focus', reset);
+      window.addEventListener('pageshow', reset);
+    }, 900);
+  }
+
   if (open && !didCaptureRef.current && !isCapturing) {
     didCaptureRef.current = true;
     setIsCapturing(true);
@@ -62,9 +117,12 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
   }
 
   function handleClose() {
+    clearDownloadWatch();
     didCaptureRef.current = false;
     setSnapshotUrl(undefined);
     setIsCapturing(false);
+    setIsDownloading(false);
+    downloadingRef.current = false;
     onClose();
   }
 
@@ -76,6 +134,9 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
     // BEFORE generatePdf() blocks the main thread — otherwise the click feels
     // dead for ~2s and users re-tap.
     await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    // When set, the finally block leaves "Generating…" up; the iOS download
+    // watcher resets it once the user comes back from the native download UI.
+    let deferReset = false;
     try {
       const dateStr = new Date().toISOString().slice(0, 10);
       const filename = `KAMINOS-ChaseCover-${dateStr}.pdf`;
@@ -84,6 +145,12 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
       const blob = await generatePdf(el);
       if (blob) {
         await deliverPdf(blob, filename);
+        if (isIOSDevice()) {
+          // iOS opens its download window ~1s after deliverPdf()'s form POST
+          // returns; keep "Generating…" until the user dismisses it.
+          deferReset = true;
+          watchForReturnFromDownload();
+        }
       } else {
         // Never fail silently — generatePdf logs the cause via pdfDebug.
         alert('Sorry, the PDF could not be generated on this device. Please try again.');
@@ -93,8 +160,10 @@ export function PdfPreviewModal({ open, onClose, captureSnapshot }: PdfPreviewMo
       pdfDebug('modal:error', { error: String((error as Error)?.message || error) });
       alert('Sorry, the PDF download failed. Please try again.');
     } finally {
-      setIsDownloading(false);
-      downloadingRef.current = false;
+      if (!deferReset) {
+        setIsDownloading(false);
+        downloadingRef.current = false;
+      }
     }
   }
 
