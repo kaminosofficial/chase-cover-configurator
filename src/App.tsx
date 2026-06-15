@@ -1577,6 +1577,59 @@ function waitForNextFrame() {
   });
 }
 
+// Trims the empty white border around the rendered model on a white-composited
+// canvas, returning a tightly-cropped canvas so the product fills the frame
+// (a flat/wide chase cover otherwise leaves large margins in the square-ish
+// viewport, which then show as whitespace in the cart image + PDF hero). Scans
+// for the non-white content bounds, pads slightly, and redraws onto a new white
+// canvas. Returns the original on any failure or if there's nothing to trim.
+function cropCanvasToContent(src: HTMLCanvasElement, padFrac = 0.05): HTMLCanvasElement {
+  try {
+    const ctx = src.getContext('2d');
+    if (!ctx) return src;
+    const w = src.width;
+    const h = src.height;
+    if (!w || !h) return src;
+    const { data } = ctx.getImageData(0, 0, w, h);
+    const T = 247; // pixels with R,G,B all >= T are treated as background white
+    const step = Math.max(1, Math.round(Math.min(w, h) / 600)); // subsample big canvases
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y += step) {
+      const row = y * w;
+      for (let x = 0; x < w; x += step) {
+        const i = (row + x) * 4;
+        if (data[i] < T || data[i + 1] < T || data[i + 2] < T) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX || maxY < minY) return src; // entirely white → nothing to crop
+    const padX = Math.round((maxX - minX) * padFrac);
+    const padY = Math.round((maxY - minY) * padFrac);
+    minX = Math.max(0, minX - padX);
+    minY = Math.max(0, minY - padY);
+    maxX = Math.min(w - 1, maxX + padX);
+    maxY = Math.min(h - 1, maxY + padY);
+    const cw = maxX - minX + 1;
+    const ch = maxY - minY + 1;
+    if (cw >= w && ch >= h) return src; // already tight
+    const out = document.createElement('canvas');
+    out.width = cw;
+    out.height = ch;
+    const octx = out.getContext('2d');
+    if (!octx) return src;
+    octx.fillStyle = '#ffffff';
+    octx.fillRect(0, 0, cw, ch);
+    octx.drawImage(src, minX, minY, cw, ch, 0, 0, cw, ch);
+    return out;
+  } catch {
+    return src;
+  }
+}
+
 async function waitForPromiseWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<{ resolved: boolean; value: T | null }> {
   let timeoutId = 0;
 
@@ -1658,7 +1711,9 @@ async function captureCanvasScreenshot(
         ctx2d.fillStyle = '#ffffff';
         ctx2d.fillRect(0, 0, tmp.width, tmp.height);
         ctx2d.drawImage(canvasEl, 0, 0);
-        result = tmp.toDataURL('image/jpeg', 0.85);
+        // Trim the empty white border so the product fills the frame (removes the
+        // whitespace around the model in the cart image + PDF hero).
+        result = cropCanvasToContent(tmp).toDataURL('image/jpeg', 0.85);
       } else {
         result = canvasEl.toDataURL('image/jpeg', 0.85);
       }
