@@ -1654,6 +1654,40 @@ function padCanvasToSquare(src: HTMLCanvasElement): HTMLCanvasElement {
   }
 }
 
+// Encodes a canvas to a JPEG data URL guaranteed under the variant-image upload
+// limit (~525KB / ~700k base64 chars): first downscale very large captures (a
+// high-DPR 3D canvas can be 1600px+), then step quality down if still over.
+// Without this a big, detailed render (e.g. a 120"x60" model on a Retina screen)
+// can 413 at /api/variant-image — which isn't retried — leaving the variant
+// imageless (cart falls back to the default product photo).
+function canvasToJpegUnderLimit(src: HTMLCanvasElement, maxBase64 = 680000): string {
+  let canvas = src;
+  const MAX_DIM = 1400;
+  const big = Math.max(src.width, src.height);
+  if (big > MAX_DIM) {
+    try {
+      const scale = MAX_DIM / big;
+      const sc = document.createElement('canvas');
+      sc.width = Math.max(1, Math.round(src.width * scale));
+      sc.height = Math.max(1, Math.round(src.height * scale));
+      const sctx = sc.getContext('2d');
+      if (sctx) {
+        sctx.fillStyle = '#ffffff';
+        sctx.fillRect(0, 0, sc.width, sc.height);
+        sctx.drawImage(src, 0, 0, sc.width, sc.height);
+        canvas = sc;
+      }
+    } catch { /* fall back to the original canvas */ }
+  }
+  let q = 0.85;
+  let data = canvas.toDataURL('image/jpeg', q);
+  while (data.length > maxBase64 && q > 0.5) {
+    q = Math.round((q - 0.12) * 100) / 100;
+    data = canvas.toDataURL('image/jpeg', q);
+  }
+  return data;
+}
+
 async function waitForPromiseWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<{ resolved: boolean; value: T | null }> {
   let timeoutId = 0;
 
@@ -1707,6 +1741,9 @@ async function captureCanvasScreenshot(
     }
 
     if (options?.resetView) {
+      // Save the user's current camera so it can be restored after the capture —
+      // otherwise the live viewer is left "stuck" at the fit pose after export.
+      cameraActions.snapshot();
       // Frame the camera to the product's bounding box so it's a consistent size
       // and fully visible in every capture (cart image + PDF), regardless of dims.
       cameraActions.fitView();
@@ -1743,7 +1780,7 @@ async function captureCanvasScreenshot(
         // of slicing the sides off a wide (tightly-cropped) image. The PDF keeps
         // the tight crop (it letterboxes, so no cropping there).
         if (options?.square) outCanvas = padCanvasToSquare(outCanvas);
-        result = outCanvas.toDataURL('image/jpeg', 0.85);
+        result = canvasToJpegUnderLimit(outCanvas);
       } else {
         result = canvasEl.toDataURL('image/jpeg', 0.85);
       }
@@ -1756,6 +1793,8 @@ async function captureCanvasScreenshot(
   } catch {
     return undefined;
   } finally {
+    // Put the live camera back where the user had it (capture used fitView).
+    if (options?.resetView) cameraActions.restore();
     if (previousLabels && (previousLabels.showLabels || previousLabels.showLabelsA || previousLabels.showLabelsB || previousLabels.showLabelsC)) {
       configStore.set(previousLabels);
     }

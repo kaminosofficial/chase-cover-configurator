@@ -9,6 +9,11 @@ export const cameraActions = {
   // size and fully visible (never cropped, never tiny) regardless of dimensions —
   // used by the screenshot capture (cart image + PDF).
   fitView: () => {},
+  // snapshot()/restore() bracket a capture: save the user's current camera before
+  // fitView() reframes for the screenshot, then put it back so the live viewer
+  // isn't left "stuck" at the capture pose.
+  snapshot: () => {},
+  restore: () => {},
 };
 
 export function bindCameraActions(camera: THREE.Camera, controls: any) {
@@ -60,5 +65,17 @@ export function bindCameraActions(camera: THREE.Camera, controls: any) {
     controls.update();
     controls.minDistance = prevMin;
     controls.maxDistance = prevMax;
+  };
+
+  let savedView: { pos: THREE.Vector3; target: THREE.Vector3 } | null = null;
+  cameraActions.snapshot = () => {
+    savedView = { pos: camera.position.clone(), target: controls.target.clone() };
+  };
+  cameraActions.restore = () => {
+    if (!savedView) return;
+    camera.position.copy(savedView.pos);
+    controls.target.copy(savedView.target);
+    controls.update();
+    savedView = null;
   };
 }
