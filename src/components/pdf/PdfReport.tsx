@@ -186,7 +186,7 @@ export function PdfReport({ snapshotUrl }: PdfReportProps) {
           <div style={{ height: '1px', background: C.hair, margin: '0 53px' }} />
 
           {/* Page 1 Body */}
-          <div style={{ flex: '1 1 auto', padding: '16px 53px 28px', display: 'flex', flexDirection: 'row', gap: '60px', alignItems: 'flex-start' }}>
+          <div style={{ flex: '1 1 auto', padding: '16px 53px 28px', display: 'flex', flexDirection: 'row', gap: '60px', alignItems: 'stretch' }}>
             {/* Left Column: General Dimensions */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div>
@@ -245,7 +245,7 @@ export function PdfReport({ snapshotUrl }: PdfReportProps) {
           </header>
 
           {/* Page 2 Body */}
-          <div style={{ flex: '1 1 auto', padding: '40px 53px 28px', display: 'flex', flexDirection: 'row', gap: '60px', alignItems: 'flex-start' }}>
+          <div style={{ flex: '1 1 auto', padding: '40px 53px 28px', display: 'flex', flexDirection: 'row', gap: '60px', alignItems: 'stretch' }}>
             {/* Left Column: Remaining Holes & Notes */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div>
@@ -298,7 +298,7 @@ export function PdfReport({ snapshotUrl }: PdfReportProps) {
 
       <div style={{ height: '1px', background: C.hair, margin: '0 53px' }} />
 
-      <div style={{ flex: '1 1 auto', padding: '16px 53px 28px', display: 'flex', flexDirection: 'row', gap: '60px', alignItems: 'flex-start' }}>
+      <div style={{ flex: '1 1 auto', padding: '16px 53px 28px', display: 'flex', flexDirection: 'row', gap: '60px', alignItems: 'stretch' }}>
         {/* Left Column */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <div>

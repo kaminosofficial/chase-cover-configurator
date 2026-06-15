@@ -1630,6 +1630,30 @@ function cropCanvasToContent(src: HTMLCanvasElement, padFrac = 0.05): HTMLCanvas
   }
 }
 
+// Expands a canvas to a centered SQUARE on white (no scaling). Used for the cart
+// thumbnail: Shopify cover-crops the variant image into a square tile, so a wide
+// (tightly-cropped) image would lose its sides. Padding the model to a square
+// first means the whole product stays visible and every variant frames the same.
+function padCanvasToSquare(src: HTMLCanvasElement): HTMLCanvasElement {
+  try {
+    const w = src.width;
+    const h = src.height;
+    if (!w || !h || w === h) return src;
+    const side = Math.max(w, h);
+    const out = document.createElement('canvas');
+    out.width = side;
+    out.height = side;
+    const ctx = out.getContext('2d');
+    if (!ctx) return src;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, side, side);
+    ctx.drawImage(src, Math.round((side - w) / 2), Math.round((side - h) / 2));
+    return out;
+  } catch {
+    return src;
+  }
+}
+
 async function waitForPromiseWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<{ resolved: boolean; value: T | null }> {
   let timeoutId = 0;
 
@@ -1649,7 +1673,7 @@ async function waitForPromiseWithin<T>(promise: Promise<T>, timeoutMs: number): 
 
 async function captureCanvasScreenshot(
   appLayoutRef: React.RefObject<HTMLDivElement | null>,
-  options?: { resetView?: boolean; hideLabels?: boolean }
+  options?: { resetView?: boolean; hideLabels?: boolean; square?: boolean }
 ): Promise<string | undefined> {
   const shouldHideLabels = options?.hideLabels ?? true;
   const configStore = useConfigStore.getState();
@@ -1713,7 +1737,13 @@ async function captureCanvasScreenshot(
         ctx2d.drawImage(canvasEl, 0, 0);
         // Trim the empty white border so the product fills the frame (removes the
         // whitespace around the model in the cart image + PDF hero).
-        result = cropCanvasToContent(tmp).toDataURL('image/jpeg', 0.85);
+        let outCanvas = cropCanvasToContent(tmp);
+        // For the cart thumbnail (square option), pad back out to a square so
+        // Shopify's square, cover-cropped thumbnail shows the WHOLE model instead
+        // of slicing the sides off a wide (tightly-cropped) image. The PDF keeps
+        // the tight crop (it letterboxes, so no cropping there).
+        if (options?.square) outCanvas = padCanvasToSquare(outCanvas);
+        result = outCanvas.toDataURL('image/jpeg', 0.85);
       } else {
         result = canvasEl.toDataURL('image/jpeg', 0.85);
       }
@@ -2834,7 +2864,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
               const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
               const screenshotCaptureStartedAt = performance.now();
-              const screenshotBase64Promise = captureCanvasScreenshot(appLayoutRef, { resetView: true, hideLabels: true })
+              const screenshotBase64Promise = captureCanvasScreenshot(appLayoutRef, { resetView: true, hideLabels: true, square: true })
                 .then((image) => ({
                   image,
                   captureMs: Math.round(performance.now() - screenshotCaptureStartedAt),
@@ -2955,7 +2985,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
                     // memory pressure). One fresh attempt — the canvas has
                     // usually recovered by now.
                     DEBUG() && console.warn('[IMG] First capture failed — retrying once');
-                    screenshotBase64 = await captureCanvasScreenshot(appLayoutRef, { resetView: true, hideLabels: true });
+                    screenshotBase64 = await captureCanvasScreenshot(appLayoutRef, { resetView: true, hideLabels: true, square: true });
                   }
 
                   if (!screenshotBase64) {
@@ -3348,7 +3378,7 @@ export default function App({ productId, variantId }: AppProps = {}) {
               const resolvedShopifyIds = resolveRuntimeShopifyIds(productId, variantId, appLayoutRef.current);
               DEBUG() && console.log('Resolved Shopify IDs for Buy Now:', resolvedShopifyIds);
 
-              const screenshotBase64Promise = captureCanvasScreenshot(appLayoutRef, { resetView: true, hideLabels: true });
+              const screenshotBase64Promise = captureCanvasScreenshot(appLayoutRef, { resetView: true, hideLabels: true, square: true });
 
               const payload = {
                 requestId,
