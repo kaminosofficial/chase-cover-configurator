@@ -368,11 +368,12 @@ Each configuration produces a deterministic hash using FNV-1a:
 
 ### Image Attachment
 
-- 3D canvas is captured as JPEG (white background composite) via `captureCanvasScreenshot()` with `hideLabels: true`
-- Uploaded to Shopify via `POST /api/variant-image` (separate from variant creation)
-- Attached to the variant so it appears in cart drawer and checkout
-- For Add to Cart: capture begins immediately; upload starts as soon as the variant ID is known. The flow waits up to 1.2s for the upload before opening the drawer (so the first section render can include the image). If still pending, drawer opens and sections are refreshed via cart events when the upload completes.
-- Upload is `await`ed for Buy Now (prevents mobile browser from cancelling mid-flight)
+- 3D canvas → JPEG (white-background composite) via `captureCanvasScreenshot()` (`hideLabels: true`, `moveHolesMode` hidden during capture, restored after).
+- **Camera framing (`cameraActions.fitView()`)**: the capture frames the camera to the model's bounding sphere (18% margin) so the WHOLE product fits at a consistent size regardless of dimensions (fixes big products getting clipped). Because it fits the *round* sphere to the *shorter* screen dimension, the product also lands inside Shopify's centered-square cart tile — so **no pixel-crop or pad-to-square is needed for the cart**. `snapshot()`/`restore()` (in `cameraRef.ts`) put the user's live camera back after the capture so the viewer isn't left at the fit pose.
+- **`canvasToJpegUnderLimit()`** downscales captures over 1400px and steps JPEG quality down so the payload stays under the `variant-image` ~525KB / 700k-base64 limit (a 413 is NOT retried → would leave the variant imageless → cart falls back to the default product photo).
+- **Cart/buy capture is deliberately LIGHT**: `fitView` + white composite + size guard — **no `getImageData` content-crop, no square pad** (those add per-add CPU/memory that strained phones; see the session-2 decision below). The **PDF** capture passes `{ framed: true }` → additionally content-crops tight for the hero (`cropCanvasToContent`, the heavier getImageData scan, fine for the one-off Export).
+- Uploaded via `POST /api/variant-image` (separate from variant creation), retried by `uploadVariantImageWithRetry` (3×/2×, backoff; 413 not retried). **Reuse-heal**: re-uploads when the server reports a reused variant has `variantHasImage:false`.
+- Add to Cart: capture + upload run in parallel with the add; the drawer opens as soon as the price is verified and the image fills in via the post-open refresh. Buy Now `await`s the upload before the `/checkout` redirect.
 
 ---
 
@@ -382,10 +383,10 @@ Users preview and download an A4 spec sheet via the **Export PDF** button next t
 
 ### How It Works
 
-1. `PdfPreviewModal.tsx` (lazy-loaded) captures a 3D snapshot, then renders `PdfReport.tsx` — the "Airy" layout: Kaminos header (runtime-cropped icon + wordmark via `getCroppedLogo()` in `kaminosLogo.ts`), hero snapshot, dimensions/holes/material/pricing. **Multi-page** when holes > 1 (`.pdf-page-render` per page; footer shows "Page 1 of 2" only on multi-page exports).
-2. `generatePdf()` in `pdfGenerator.ts` rasterizes each page — **html-to-image on desktop** (pixel-perfect SVG foreignObject) / **html2canvas on mobile** (foreignObject hangs on iOS) — then assembles an A4 PDF with jsPDF. Libraries are dynamic imports (lazy chunk in the SPA build; inlined in the IIFE).
-3. `deliverPdf()` — **identical to the cap's proven version**: Web Share sheet on mobile (files + title only, AbortError returns), download fallback with `revokeObjectURL` **delayed 4s** (revoking synchronously killed downloads on iOS).
-4. Filename: `KAMINOS-ChaseCover-YYYY-MM-DD.pdf`.
+1. `PdfPreviewModal.tsx` (lazy-loaded) captures a 3D snapshot (`{ framed: true }` → big, content-cropped hero), then renders `PdfReport.tsx` — the two-column "Airy" layout: Kaminos header (runtime-cropped icon + wordmark via `getCroppedLogo()` in `kaminosLogo.ts`), **big hero** (`HERO_MAX_W=640, HERO_MAX_H=350`, aspect-preserved), then Dimensions/Holes/Material on the left and Material & Finish + **Pricing & Summary on the right pinned to the bottom-right corner** (body row `alignItems:'stretch'` + card `marginTop:'auto'`). Per-hole **edge distances are shown even when the hole is centered** (`getHoleEdgeOffsets(holeWorld())`). **Multi-page** when holes > 1 (`.pdf-page-render` per page; footer shows "Page X of Y" only on multi-page exports).
+2. `generatePdf()` in `pdfGenerator.ts` rasterizes each `.pdf-page-render` — **html-to-image on desktop** (pixel-perfect SVG foreignObject) / **html2canvas on mobile** (foreignObject hangs on iOS) — then assembles an A4 PDF with jsPDF. Libraries are dynamic imports (lazy chunk in the SPA build; inlined in the IIFE).
+3. `deliverPdf()` — **DIRECT download** on every platform. iOS: POST the PDF to `POST /api/download-pdf`, which returns it as `application/octet-stream` + `Content-Disposition: attachment` (a hidden top-level form submit) — Safari ignores `attachment` for `application/pdf` and previews it inline, so octet-stream forces its download manager → Save to Files without navigating away. Desktop/Android: `<a download>` blob with `revokeObjectURL` **delayed 4s** (synchronous revoke killed iOS downloads). The **"Generating…" button stays until the iOS download window returns** (visibility/focus/pageshow listeners + 8s safety) so it doesn't flip back to "Download PDF" before the download UI appears.
+4. Filename: `KAMINOS-ChaseCover-YYYY-MM-DD.pdf`. (Cap's `PdfReport` is a single growable A4 page sliced by height in its `generatePdf`; same hero/pricing treatment, no per-hole pages.)
 
 ### Hard constraints (learned 2026-06-12, do not regress)
 
@@ -701,7 +702,7 @@ Vercel runtime logs are **ephemeral** — `vercel logs` only tails *"from now, f
 
 **Reading it**: open the "Cart Log" sheet tab. Columns: `at, type, requestId, action, phase, failureKind, variantId, variantIdObtained, serverTimingMs, attempts, device, connection, configSummary, errorMessage`. The `~20–40s spin then "network issue"` class of failure shows as `failureKind:'timeout'`/`'network'` with an `attempts` array whose first entry is a 30s timeout.
 
-> Deferred (recommended follow-ups, not yet built): graceful recovery UX (replace the dead-end `alert()` with a "design saved — tap to retry"; safe because the server is idempotent) and network hardening (avoid the cross-origin CORS preflight, tune the 30s client timeout, reconcile orphaned variants on retry).
+> Graceful recovery UX — **BUILT (June 2026, session 2)**: a terminal add/buy failure no longer `alert()`s; `App.tsx` sets a `submitError` state → `Sidebar` → `CartRow` renders a "Try again / Dismiss" banner. "Try again" re-invokes the same handler with the same config; the idempotent server reuses any variant already created (no duplicates). Banner auto-clears via an effect on `isSubmitting`. The underlying "network issue" is confirmed to be a **client-side connection drop** (it persisted through a full cart-code rollback; the add-request code is unchanged) — not fixable in code, so the retry banner IS the recovery. Still deferred: network hardening (avoid the cross-origin CORS preflight; reconcile orphaned variants).
 
 ### Origin Validation
 
@@ -710,6 +711,17 @@ API handlers log warnings for requests from unknown origins via `warnUnknownOrig
 ---
 
 ## Key Decisions & History
+
+### June 2026 (session 2) — cart reliability, screenshot framing, PDF, tap-to-retry
+
+Both chase + cap were taken through this together (cart flow + capture pipeline + `cameraRef.ts` are byte-identical; only the PDF *content* differs).
+
+- **"Network issue" root cause = a client-side connection drop, NOT a code bug.** Confirmed: a live add from the user's phone was captured *succeeding* in Vercel logs; `/api/add-to-cart` + CORS test healthy on both; the failure appears in ~5–10s (the 5-retry `postAddToCartApi` backoff window) all failing `Failed to fetch`; and it **persisted through a full rollback of the recent cart code**. No version can add with no network — resilience is maxed (5 retries / ~12s) and the **tap-to-retry banner** is the recovery (see the Debugging note).
+- **Screenshot framing — use the camera, not pixel-cropping.** The cart/buy capture uses `cameraActions.fitView()` (bounding-sphere fit, 18% margin) so any-size product fits the frame AND lands in Shopify's centered-square cart tile. **Do NOT re-add the `getImageData` content-crop or pad-to-square to the cart path** — they added per-add CPU/memory that strained phones on rapid adds (a suspected aggravator of failed requests) and were reverted. The heavier `cropCanvasToContent` runs ONLY for the PDF (`{ framed: true }`, a one-off Export). `canvasToJpegUnderLimit` (downscale + quality step-down) is kept everywhere — it prevents the variant-image 413 that left a variant imageless.
+- **Camera (`cameraRef.ts`)**: added `fitView` (bounding-sphere framing) + `snapshot`/`restore` (save/restore the live camera around a capture). Viewer Canvas `near:0.05, far:100` (was the three.js default 0.1/2000) — fixes the **near-plane clipping** when zooming in. `fitView` deliberately does NOT touch `near`/`far` (an earlier version set a large `near` and left it on the live camera → zoom sliced the model).
+- **DO NOT re-add cart-open timing experiments.** A round of "open the drawer only once the image is rendered" work (image-aware pre-open wait, a post-open re-inject burst, 7s mobile upload waits, an image-polling catch-up) was tried to kill the mobile `$0`/default-image flash, then **reverted** — it added latency + heavy work without fixing the connection-drop issue. The cart opens as soon as price is verified; the image fills in via the original post-open refresh. The user explicitly prefers a fast open + the retry over a "perfect" slow open.
+- **PDF**: big hero (`HERO_MAX 640×350`); **Pricing & Summary pinned to the bottom-right corner** (two-column body `alignItems:'stretch'` + card `marginTop:'auto'`); chase shows per-hole edge distances even when centered. iOS direct download via `POST /api/download-pdf` (octet-stream attachment) and the "Generating…" button holds until the iOS download UI returns.
+- **Cap-only nits not yet done**: `reset/top/front` in cap's `cameraRef.ts` still use chase's pivot height (0.04 vs cap's Canvas 0.12); cap's PDF lacks the failure `alert` + `pdfDebug` telemetry and the shadow-root sticky-header modal fix; cap's `variant-image.ts` upload filenames still say `chase-cover-`.
 
 ### June 2026 updates (ported from / aligned with the chimney cap configurator)
 
