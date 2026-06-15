@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { ChaseViewer } from './components/viewer/ChaseViewer';
 import { useConfigStore, saveConfigForRestore, restoreConfigIfNeeded } from './store/configStore';
-import type { CollarState } from './store/configStore';
+import type { CollarState, ConfigState } from './store/configStore';
 import { applyConfigState, getConfigState, exportToGLB } from './utils/ar';
 import { cameraActions } from './utils/cameraRef';
 import { RalModal } from './components/ral/RalModal';
@@ -124,15 +124,17 @@ function resolveRuntimeShopifyIds(initialProductId?: string, initialVariantId?: 
   };
 }
 
-function formatHoleSummary(code: 'A' | 'B' | 'C', index: number, collar: CollarState) {
+function formatHoleSummary(code: 'A' | 'B' | 'C', index: number, collar: CollarState, config: ConfigState) {
   const size = getHoleSizeInches(collar);
   const label = `H${index}`;
   const holeText = collar.shape === 'rect'
     ? `${label}: ${formatFrac(size.sizeZ)}" x ${formatFrac(size.sizeX)}" rect`
     : `${label}: ${String.fromCharCode(8960)}${formatFrac(collar.dia)}"`;
-  const offsetText = collar.centered
-    ? ' (on center)'
-    : ` [${code} Top: ${formatFrac(collar.offset3)}" ${code} Right: ${formatFrac(collar.offset4)}" ${code} Bottom: ${formatFrac(collar.offset1)}" ${code} Left: ${formatFrac(collar.offset2)}"]`;
+  // Edge distances always shown — even for centered holes — derived from the
+  // hole's actual world position (the centered auto-slots), matching the 3D arrows.
+  const o = getHoleEdgeOffsets(holeWorld(code, config), config);
+  const dims = `[${code} Top: ${formatFrac(o.top)}" ${code} Right: ${formatFrac(o.right)}" ${code} Bottom: ${formatFrac(o.bottom)}" ${code} Left: ${formatFrac(o.left)}"]`;
+  const offsetText = collar.centered ? ` (on center) ${dims}` : ` ${dims}`;
   return holeText + offsetText;
 }
 
@@ -1563,8 +1565,15 @@ async function waitForUsableRenderedSections(opts: {
  * WebGL canvases have transparency â€” compositing onto white prevents black artifacts.
  */
 function waitForNextFrame() {
+  // Resolve on the next animation frame OR after a short timer, whichever fires
+  // first. requestAnimationFrame is throttled/suspended when the tab is
+  // backgrounded — without the timer fallback the screenshot capture (which
+  // awaits this) would hang indefinitely if the user switches tabs mid-export.
   return new Promise<void>((resolve) => {
-    window.requestAnimationFrame(() => resolve());
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    window.requestAnimationFrame(finish);
+    window.setTimeout(finish, 150);
   });
 }
 
@@ -1621,7 +1630,9 @@ async function captureCanvasScreenshot(
     }
 
     if (options?.resetView) {
-      cameraActions.reset();
+      // Frame the camera to the product's bounding box so it's a consistent size
+      // and fully visible in every capture (cart image + PDF), regardless of dims.
+      cameraActions.fitView();
       // Let OrbitControls and the canvas render settle before grabbing the image.
       await waitForNextFrame();
       await waitForNextFrame();
@@ -2584,9 +2595,9 @@ export default function App({ productId, variantId }: AppProps = {}) {
 
   const displayDimLines = [
     `${formatFrac(config.w)}" W x ${formatFrac(config.l)}" L x ${formatFrac(config.sk)}" Skirt`,
-    ...(config.holes >= 1 ? [formatHoleSummary('A', 1, config.collarA)] : []),
-    ...(config.holes >= 2 ? [formatHoleSummary('B', 2, config.collarB)] : []),
-    ...(config.holes === 3 ? [formatHoleSummary('C', 3, config.collarC)] : []),
+    ...(config.holes >= 1 ? [formatHoleSummary('A', 1, config.collarA, config)] : []),
+    ...(config.holes >= 2 ? [formatHoleSummary('B', 2, config.collarB, config)] : []),
+    ...(config.holes === 3 ? [formatHoleSummary('C', 3, config.collarC, config)] : []),
   ];
 
   return (
