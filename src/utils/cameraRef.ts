@@ -52,11 +52,11 @@ export function bindCameraActions(camera: THREE.Camera, controls: any) {
     controls.maxDistance = Infinity;
     controls.target.copy(sphere.center);
     cam.position.copy(sphere.center.clone().add(dir.multiplyScalar(dist)));
-    if ((cam as any).isPerspectiveCamera) {
-      cam.near = Math.max(0.001, dist - radius * 2);
-      cam.far = dist + radius * 4;
-      cam.updateProjectionMatrix();
-    }
+    // NOTE: intentionally do NOT touch cam.near/cam.far here. The camera's near/far
+    // are set once on the Canvas (small near, tight far) and must stay put — an
+    // earlier version set near = dist - radius*2 (~1.45 for a large cover) and left
+    // it on the live camera, so zooming in after a capture sliced the model at the
+    // near plane. fitView only repositions the camera now.
     controls.update();
     controls.minDistance = prevMin;
     controls.maxDistance = prevMax;
