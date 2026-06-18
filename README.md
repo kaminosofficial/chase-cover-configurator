@@ -1,73 +1,48 @@
-# React + TypeScript + Vite
+# Kaminos Chase Cover Configurator
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The interactive 3D product configurator embedded on the Kaminos **chase cover**
+product page. Customers set dimensions, hole placements, material, gauge and
+finish; they see a live 3D preview and price, then add their custom build
+straight to the cart (with AR preview and a downloadable PDF spec sheet).
 
-Currently, two official plugins are available:
+- **Live (production):** https://chase-cover-configurator.vercel.app
+- **Embedded on:** the Kaminos Shopify chase-cover product page
+- **Repo:** https://github.com/kaminosofficial/chase-cover-configurator
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## For the store owner (no developer needed)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Change prices
+All prices come from a **Google Sheet**. Edit the sheet and the new prices go
+live on the site **within about 5 minutes** — no code change, no developer, no
+redeploy.
 
-## Expanding the ESLint configuration
+- The sheet is the pricing sheet shared with you (ask your developer for the link
+  if you don't have it).
+- Edit the **values** only. Don't rename, move, or delete the label cells next to
+  them — those are how the site finds each price.
+- A change takes up to ~5 minutes to appear (the site caches prices briefly).
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### If something looks wrong
+1. Hard-refresh the product page (Ctrl/Cmd + Shift + R).
+2. Check the pricing sheet is reachable and the values look right.
+3. Still wrong? Contact your developer — full technical docs and history are in
+   [CLAUDE.md](CLAUDE.md).
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+---
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## For developers
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- **Full technical docs:** [CLAUDE.md](CLAUDE.md) — architecture, Shopify cart
+  flow, pricing, 3D geometry, decision history.
+- **How to ship changes safely:** [SHIPPING.md](SHIPPING.md) — branches,
+  previews, the automatic check, the merge flow.
+- **Shopify embed setup:** [SHOPIFY-INTEGRATION-GUIDE.md](SHOPIFY-INTEGRATION-GUIDE.md).
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Quickstart:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev          # http://localhost:5173
 ```
