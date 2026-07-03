@@ -49,7 +49,7 @@ function DimInput({ configKey, label, unit, max, step = 0.125, tooltip }: DimPro
   function commit() {
     setFocused(false);
     let raw = parseFloat(inputVal) || 0;
-    raw = Math.round(raw / step) * step;
+    raw = Math.ceil(raw / step) * step;
     const clamped = Math.max(getDynamicMin(), Math.min(max, raw));
     setInputVal(clamped.toString());
     config.set({ [configKey]: clamped });
