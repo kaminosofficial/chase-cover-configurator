@@ -49,7 +49,7 @@ function DimInput({ configKey, label, unit, max, step = 0.125, tooltip }: DimPro
   function commit() {
     setFocused(false);
     let raw = parseFloat(inputVal) || 0;
-    raw = Math.ceil(raw / step) * step;
+    raw = Math.round(raw / step) * step;
     const clamped = Math.max(getDynamicMin(), Math.min(max, raw));
     setInputVal(clamped.toString());
     config.set({ [configKey]: clamped });
@@ -86,7 +86,7 @@ export function DimensionFields() {
         label="Length"
         unit="in"
         max={120}
-        step={0.5}
+        step={0.125}
         tooltip="Measure the outside length of your chase opening from edge to edge. Add 1/2'' for proper fitment."
       />
       <DimInput
@@ -94,7 +94,7 @@ export function DimensionFields() {
         label="Width"
         unit="in"
         max={60}
-        step={0.5}
+        step={0.125}
         tooltip="Measure the outside width of your chase opening from edge to edge. Add 1/2'' for proper fitment."
       />
       <DimInput
