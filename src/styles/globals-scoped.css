@@ -1449,3 +1449,81 @@
 }
 
 
+/* ============================================================
+   Worksheet-style UI (July 2026 redesign)
+   Cover-type cards, numbered section bands, live 2D profile
+   drawings, mounting-option rows.
+   ============================================================ */
+
+.chase-cover-configurator-root .ws-band {
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 9px 14px;
+  margin-bottom: 14px;
+}
+
+.chase-cover-configurator-root .type-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.chase-cover-configurator-root .type-card {
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 12px 8px 10px;
+  cursor: pointer;
+  text-align: center;
+  font-family: var(--font-ui);
+  color: var(--color-accent);
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.chase-cover-configurator-root .type-card:hover { border-color: var(--color-border-active); }
+.chase-cover-configurator-root .type-card.active {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent) inset;
+  background: #fbf7f0;
+}
+.chase-cover-configurator-root .type-card svg { display: block; margin: 0 auto 8px; }
+.chase-cover-configurator-root .type-card-title { display: block; font-size: 13px; font-weight: 600; color: var(--color-text); }
+.chase-cover-configurator-root .type-card-sub { display: block; font-size: 11px; color: var(--text-helper); }
+
+.chase-cover-configurator-root .profile-drawing {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 12px 10px 6px;
+  margin: 10px 0 14px;
+}
+.chase-cover-configurator-root .profile-drawing-caption {
+  font-size: 11px;
+  color: var(--text-helper);
+  text-align: center;
+  padding-bottom: 6px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.chase-cover-configurator-root .profile-drawing svg { display: block; width: 100%; height: auto; }
+
+.chase-cover-configurator-root .ws-note {
+  font-size: 12px;
+  color: var(--text-helper);
+  background: var(--color-surface-soft);
+  border-radius: 10px;
+  padding: 9px 12px;
+  margin-top: 10px;
+  line-height: 1.45;
+}
+.chase-cover-configurator-root .ws-note b { color: var(--text-section); }
+
+.chase-cover-configurator-root .toggle-sublabel {
+  display: block;
+  width: 100%;
+  font-size: 11px;
+  color: var(--text-helper);
+  font-weight: 400;
+  margin-top: 2px;
+}
+

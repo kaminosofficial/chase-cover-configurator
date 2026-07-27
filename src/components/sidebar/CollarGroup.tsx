@@ -3,6 +3,7 @@ import { useConfigStore } from '../../store/configStore';
 import type { CollarState, ConfigState, HoleShape } from '../../store/configStore';
 import { clampDragToOffsets, getHoleSizeInches, holeWorld, holesOverlap, MIN_GAP_INCHES, SC } from '../../utils/geometry';
 import { InfoTooltip } from './InfoTooltip';
+import { TopProfile, SideProfile } from './ProfileDrawings';
 
 interface Props {
   id: 'A' | 'B' | 'C';
@@ -506,11 +507,15 @@ export function CollarGroup({ id, label }: Props) {
     });
   }
 
+  const holeNum = id === 'A' ? 1 : id === 'B' ? 2 : 3;
+
   return (
     <div className="collar-group">
       <div className="collar-group-title">
         <span className="collar-group-title-label">{label}</span>
       </div>
+
+      <TopProfile activeId={id} />
 
       <div className="field" style={{ marginBottom: 12 }}>
         <label style={{ display: 'flex', alignItems: 'center' }}>
@@ -598,14 +603,14 @@ export function CollarGroup({ id, label }: Props) {
         <div className="offset-grid">
           <div className="field-row">
             <CollarInput
-              label={`${id}1 (Top edge → hole)`}
+              label={`TE${holeNum} (Top edge → hole)`}
               value={collar.offset3}
               min={0}
               max={maxW}
               onCommit={commitTop}
             />
             <CollarInput
-              label={`${id}3 (Bottom edge → hole)`}
+              label={`BE${holeNum} (Bottom edge → hole)`}
               value={collar.offset1}
               min={0}
               max={maxW}
@@ -614,22 +619,24 @@ export function CollarGroup({ id, label }: Props) {
           </div>
           <div className="field-row">
             <CollarInput
-              label={`${id}2 (Right edge → hole)`}
-              value={collar.offset4}
-              min={0}
-              max={maxL}
-              onCommit={commitRight}
-            />
-            <CollarInput
-              label={`${id}4 (Left edge → hole)`}
+              label="LE (Left edge → hole)"
               value={collar.offset2}
               min={0}
               max={maxL}
               onCommit={commitLeft}
             />
+            <CollarInput
+              label="RE (Right edge → hole)"
+              value={collar.offset4}
+              min={0}
+              max={maxL}
+              onCommit={commitRight}
+            />
           </div>
         </div>
       )}
+
+      <SideProfile activeId={id} />
     </div>
   );
 }
