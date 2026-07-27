@@ -165,10 +165,9 @@ import cssText from './styles/globals-scoped.css?inline';
         } else {
             mount!.style.height = 'auto';
             mount!.style.minHeight = 'auto';
-            // Use overflow:clip (not hidden) so the sticky 3D viewer cannot
-            // paint outside the widget's own bounding box on mobile.
-            // This prevents the grey canvas background from bleeding into the
-            // Shopify page area above when the user scrolls back down.
+            // Use overflow:clip (not hidden) so nothing inside the widget can
+            // paint outside its own bounding box on mobile. clip (unlike hidden)
+            // creates no scroll container, so the page still scrolls normally.
             mount!.style.overflow = 'clip';
         }
     };
@@ -267,98 +266,13 @@ import cssText from './styles/globals-scoped.css?inline';
         </React.StrictMode>
     );
 
-    // 10. Mobile sticky scroll observer
-    // The .viewport CSS is set to position:relative by default on mobile.
-    // This observer switches it to position:sticky ONLY while the widget's
-    // top edge has scrolled above the viewport top. This prevents the WebGL
-    // canvas from bleeding into Shopify page sections above the widget when
-    // scrolling back down.
-    const setupMobileStickyScroll = () => {
-        const shadow = mount!.shadowRoot;
-        if (!shadow) return;
-
-        // Create a zero-height spacer in the light DOM immediately before the mount element.
-        // As a light-DOM sibling, its bounding rect is completely independent of shadow DOM sticky layouts.
-        const SPACER_CLASS = 'chase-cover-configurator-spacer';
-        let spacer = document.querySelector(`.${SPACER_CLASS}`) as HTMLElement | null;
-        if (!spacer && mount!.parentNode) {
-            spacer = document.createElement('div');
-            spacer.className = SPACER_CLASS;
-            spacer.style.cssText = 'width:100%;height:0px;margin:0;padding:0;border:none;pointer-events:none;';
-            mount!.parentNode.insertBefore(spacer, mount);
-        }
-
-        const trySetup = (attempt = 0) => {
-            const viewportEl = shadow.querySelector('.viewport') as HTMLElement | null;
-            if (!viewportEl) {
-                if (attempt < 20) setTimeout(() => trySetup(attempt + 1), 150);
-                return;
-            }
-
-            let currentlySticky = false;
-
-            const setSticky = (stick: boolean) => {
-                if (stick === currentlySticky) return;
-                currentlySticky = stick;
-                if (stick) {
-                    viewportEl.style.position = 'sticky';
-                    viewportEl.style.top = '0';
-                } else {
-                    viewportEl.style.position = 'relative';
-                    viewportEl.style.top = '';
-                }
-            };
-
-            const isMobile = () => window.innerWidth < 768;
-
-            // Primary detection: IntersectionObserver on the light-DOM spacer.
-            // Unlike scroll listeners, IO reliably fires across iOS momentum/inertial
-            // scrolling so we never get stuck in the sticky state after rebound.
-            // The spacer is in the light DOM (outside shadow root), so its geometry
-            // is unaffected by the sticky element inside the viewport.
-            const refEl: HTMLElement = spacer || mount!;
-            const io = new IntersectionObserver(
-                (entries) => {
-                    if (!isMobile()) {
-                        setSticky(false);
-                        return;
-                    }
-                    const entry = entries[0];
-                    if (!entry) return;
-                    // Spacer is fully visible (or below the top) → release sticky.
-                    // Spacer is scrolled above the viewport (intersectionRatio = 0
-                    // AND boundingClientRect.top < 0) → engage sticky.
-                    const top = entry.boundingClientRect.top;
-                    setSticky(!entry.isIntersecting && top < 0);
-                },
-                { threshold: [0, 1], rootMargin: '0px' }
-            );
-            io.observe(refEl);
-
-            // Belt-and-suspenders: a scroll fallback that force-releases sticky
-            // whenever the spacer (or page) is at/below the viewport top. Covers
-            // the rare case where IO callbacks are throttled/missed during fast
-            // momentum scrolls in older iOS WebKit builds.
-            const onScroll = () => {
-                if (!isMobile()) {
-                    setSticky(false);
-                    return;
-                }
-                const top = refEl.getBoundingClientRect().top;
-                if (top > 0 && currentlySticky) setSticky(false);
-                else if (top <= 0 && !currentlySticky) setSticky(true);
-            };
-
-            window.addEventListener('scroll', onScroll, { capture: true, passive: true });
-            window.addEventListener('resize', onScroll, { passive: true });
-            // iOS Safari fires touchend after momentum settles — last-ditch check.
-            window.addEventListener('touchend', onScroll, { passive: true });
-            onScroll();
-        };
-
-        // Wait for React to render the viewport element
-        setTimeout(() => trySetup(), 300);
-    };
-
-    setupMobileStickyScroll();
+    // 10. Mobile viewer scroll behaviour
+    // The 3D viewer flows naturally with the page on mobile (client request,
+    // July 2026). There used to be an IntersectionObserver here that pinned
+    // .viewport to position:sticky once the widget scrolled past the top —
+    // that has been removed, along with its light-DOM spacer element. Any
+    // spacer left over from a previously cached bundle is cleaned up below.
+    document
+        .querySelectorAll('.chase-cover-configurator-spacer')
+        .forEach((el) => el.remove());
 })();

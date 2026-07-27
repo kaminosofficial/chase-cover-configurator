@@ -66,10 +66,11 @@ header {
 .app-layout { display: flex; flex: 1; overflow: hidden; position: relative; min-height: 0; height: 100%; }
 
 /* IMPORTANT: .viewport bg MUST stay white. iOS Safari (especially iOS 26+)
-   samples the background-color of any fixed/sticky element near the top of
-   the viewport to tint the address bar, ignoring theme-color. .viewport is
-   sticky on mobile, so if it were grey the address bar would go grey too.
-   The visible grey comes from the .viewport-bg child below. */
+   samples the background-color of large elements near the top of the viewport
+   to tint the address bar, ignoring theme-color — a grey .viewport turned the
+   address bar grey. The visible grey comes from the .viewport-bg child below.
+   (Originally this mattered because .viewport was sticky on mobile; the
+   sticky behaviour was removed July 2026 but white must stay.) */
 .viewport { flex: 1; position: relative; background: #ffffff; min-height: 0; }
 .viewport-bg { position: absolute; inset: 0; background: #dbd8d0; pointer-events: none; z-index: 0; }
 .viewport canvas { width: 100% !important; height: 100% !important; display: block; position: relative; z-index: 1; }
@@ -908,12 +909,13 @@ header {
     flex: none;
     height: 35vh !important;
     min-height: 0;
-    /* JS scroll observer toggles position between sticky/relative.
-       Default to relative so it never bleeds above the widget boundary.
-       z-index stays LOW (1): it must sit above the non-positioned sidebar
-       while sticky, but never above theme chrome — the Shopify header/search
-       dropdown is z-index:1000, and a higher value here let the sticky viewer
-       paint over the open search dropdown on mobile. */
+    /* The viewer flows naturally with the page on mobile (client request,
+       July 2026) — it is NOT sticky. position:relative is only here so the
+       absolutely-positioned children (.viewport-bg, .viewport-controls) have
+       a containing block. z-index stays LOW (1): above the non-positioned
+       sidebar, but never above theme chrome — the Shopify header/search
+       dropdown is z-index:1000, and a higher value here let the viewer paint
+       over the open search dropdown on mobile. */
     position: relative;
     top: 0;
     z-index: 1;
