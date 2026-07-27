@@ -7,6 +7,7 @@ import { ToggleRow } from './ToggleRow';
 import { PowderCoatSection } from './PowderCoatSection';
 import { PriceDisplay } from './PriceDisplay';
 import { CartRow } from './CartRow';
+import { TopProfile, SideProfile } from './ProfileDrawings';
 import { useConfigStore } from '../../store/configStore';
 import { InfoTooltip } from './InfoTooltip';
 
@@ -33,42 +34,16 @@ export function Sidebar({ onOpenRal, onAddToCart, onBuyNow, isSubmitting = false
         <h1 className="sidebar-main-title">Chase Cover Configurator</h1>
 
         <div className="section">
-          <div className="section-title">
-            <span className="section-title-label">Cover Dimensions</span>
-          </div>
-          <DimensionFields />
-          <label className="centered-check" style={{ marginTop: 8 }}>
-            <input
-              type="checkbox"
-              checked={config.showLabels}
-              onChange={e => config.set({ showLabels: e.target.checked })}
-            />
-            Show Side Labels (Top / Right / Bottom / Left)
-          </label>
-        </div>
-
-        <div className="section">
-          <div className="section-title">
-            <span className="section-title-label">Options</span>
-          </div>
-          <ToggleRow id="drip" label="Drip Edge" tooltip="A drip edge extends beyond the skirt at a 45-degree angle, directing rainwater away from the chase to prevent water damage." />
-          <ToggleRow id="diag" label="Diagonal Crease" tooltip="Diagonal creases from each corner create a peaked surface that channels water and debris off the cover." />
-        </div>
-
-        <div className="section">
-          <div className="section-title">
-            <span className="section-title-label">Flue Holes</span>
+          <div className="section-title ws-band">
+            <span className="section-title-label">1 · Cover Type</span>
             <InfoTooltip text="Flue holes accommodate chimney pipes passing through the cover. Select how many openings your chase requires." />
           </div>
           <HoleSelector />
-          {holes >= 1 && <CollarGroup id="A" label="Hole 1" />}
-          {holes >= 2 && <CollarGroup id="B" label="Hole 2" />}
-          {holes === 3 && <CollarGroup id="C" label="Hole 3" />}
         </div>
 
         <div className="section">
-          <div className="section-title">
-            <span className="section-title-label">Material</span>
+          <div className="section-title ws-band">
+            <span className="section-title-label">2 · Material &amp; Gauge</span>
             <InfoTooltip text="Stainless steel is durable and cost-effective. Copper develops a natural patina over time and offers superior longevity." />
           </div>
           <MaterialChips />
@@ -81,18 +56,52 @@ export function Sidebar({ onOpenRal, onAddToCart, onBuyNow, isSubmitting = false
               <GaugeSelect />
             </div>
           </div>
+          {config.mat !== 'copper' && (
+            <div className="section-subgroup section--powder">
+              <ToggleRow id="pc" label="Powder Coating" tooltip="Powder coating adds a baked-on color finish for UV protection and a custom appearance." />
+              {pc && <PowderCoatSection onOpenRal={onOpenRal} />}
+            </div>
+          )}
         </div>
 
-        {config.mat !== 'copper' && (
-          <div className="section section--powder">
-            <div className="section-title">
-              <span className="section-title-label">Powder Coating</span>
-              <InfoTooltip text="Powder coating adds a baked-on color finish for UV protection and a custom appearance." />
+        <div className="section">
+          <div className="section-title ws-band">
+            <span className="section-title-label">3 · Chase Box Options</span>
+          </div>
+          <DimensionFields />
+          <ToggleRow id="diag" label="X Bend (Diagonal Crease)" tooltip="Diagonal creases from each corner create a peaked surface that channels water and debris off the cover." />
+          <ToggleRow id="drip" label="½″ Drip Edge" tooltip="A drip edge extends beyond the skirt at a 45-degree angle, directing rainwater away from the chase to prevent water damage." />
+          <TopProfile />
+          <SideProfile />
+          <div className="ws-note"><b>Measuring tip:</b> Length, Width and Collar should be ½″ bigger than the existing chase / flue to fit over it.</div>
+          <label className="centered-check" style={{ marginTop: 8 }}>
+            <input
+              type="checkbox"
+              checked={config.showLabels}
+              onChange={e => config.set({ showLabels: e.target.checked })}
+            />
+            Show Side Labels (Top / Right / Bottom / Left)
+          </label>
+        </div>
+
+        {holes >= 1 && (
+          <div className="section">
+            <div className="section-title ws-band">
+              <span className="section-title-label">4 · Hole Options</span>
             </div>
-            <ToggleRow id="pc" label="Color Options" />
-            {pc && <PowderCoatSection onOpenRal={onOpenRal} />}
+            {holes >= 1 && <CollarGroup id="A" label="Hole #1 Options" />}
+            {holes >= 2 && <CollarGroup id="B" label="Hole #2 Options" />}
+            {holes === 3 && <CollarGroup id="C" label="Hole #3 Options" />}
           </div>
         )}
+
+        <div className="section">
+          <div className="section-title ws-band">
+            <span className="section-title-label">{holes >= 1 ? '5' : '4'} · Mounting Options</span>
+          </div>
+          <ToggleRow id="mountSkirt" label="Skirt Mounting Holes" sub="standard ¼″ hole · 4″ in from each edge · 2 per side" />
+          <ToggleRow id="mountTop" label="Top Mounting Holes" sub="standard ¼″ hole · 2″ in · one in each corner" />
+        </div>
 
       </div>
 

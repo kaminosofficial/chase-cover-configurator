@@ -29,6 +29,10 @@ export interface ConfigState {
   pc: boolean;
   pcCol: string;
   holes: 0 | 1 | 2 | 3;
+  /** Skirt mounting holes: standard 1/4" hole, 4" in from each edge, 2 per side (UI + drawings + order line only — no 3D/pricing yet) */
+  mountSkirt: boolean;
+  /** Top mounting holes: standard 1/4" hole, 2" in, one in each corner (UI + drawings + order line only — no 3D/pricing yet) */
+  mountTop: boolean;
   collarA: CollarState;
   collarB: CollarState;
   collarC: CollarState;
@@ -87,6 +91,8 @@ const initial: StoreData = {
   mat: 'galvanized', gauge: 24,
   pc: false, pcCol: '#0B0E0F',
   holes: 1,
+  mountSkirt: false,
+  mountTop: false,
   collarA: { ...defaultCollar, dia: 10 },
   collarB: { ...defaultCollar, dia: 10 },
   collarC: { ...defaultCollar, dia: 10 },
@@ -114,6 +120,7 @@ export function saveConfigForRestore() {
       mat: s.mat, gauge: s.gauge,
       pc: s.pc, pcCol: s.pcCol,
       holes: s.holes,
+      mountSkirt: s.mountSkirt, mountTop: s.mountTop,
       collarA: s.collarA, collarB: s.collarB, collarC: s.collarC,
       quantity: s.quantity, notes: s.notes,
     };
