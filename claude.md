@@ -325,7 +325,7 @@ The sheet uses a key-value format with rows like:
 | `SKIRT_SURCHARGE` | 75 | Applied if skirt >= threshold |
 | `SKIRT_THRESHOLD` | 6 | Inches |
 | `PAINTED_MULTIPLIER` | 1.5 | Powder coat multiplier |
-| `GAUGE_*` | GAUGE_24=1.0, GAUGE_10=3.4 | Gauge multipliers |
+| `GAUGE_*` | GAUGE_24=3.39, GAUGE_22=4, GAUGE_20=4.8 | Gauge multipliers (only 24/22/20 exist) |
 | `MAT_*` | MAT_galvanized=1.0, MAT_copper=3.0 | Material multipliers |
 | `SC_*` | SC_40=30, SC_100=60 | Storm collar prices by size (tenths of inches) |
 | `COEF_*` | varies | Model coefficients |
@@ -342,7 +342,9 @@ The pricing formula is implemented in `computePricingBreakdown()` which is share
 
 **Powder coat**: Charged only when `pc === true && mat !== 'copper'`. When copper is selected, powder coat state is preserved in the store but the charge and color swatch are not applied.
 
-**Gauge multipliers**: 24ga=1.0, 20ga=1.3, 18ga=1.4, 16ga=1.6, 14ga=1.8, 12ga=2.7, 10ga=3.4
+**Gauge multipliers**: 24ga=3.39, 22ga=4, 20ga=4.8 (`DEFAULT_GAUGE_MULT` in `src/utils/pricing.ts`).
+
+⚠️ **Only 24, 22 and 20 gauge exist.** `GaugeSelect.tsx` offers exactly these three and `normalizeGauge()` in `configStore.ts` silently clamps anything else to 24. Earlier revisions of this file listed 18/16/14/12/10 with different multipliers — that was wrong and caused a mockup to be built with seven non-existent gauges. The worksheet PDFs show 24/20/10, which is also not what the app supports; the code is authoritative.
 
 **Material multipliers**: Galvanized=1.0, Copper=3.0
 
@@ -500,7 +502,7 @@ Per-hole labels are individually toggleable via "Show Labels" checkbox.
 `SC = 0.02` — world units per inch. All calculations convert inches to world units.
 
 ### Gauge Thickness (inches)
-10ga=0.1345, 12ga=0.1046, 14ga=0.0747, 16ga=0.0598, 18ga=0.0478, 20ga=0.0359, 24ga=0.0239
+24ga=0.0239, 22ga=0.0299, 20ga=0.0359 (`GAUGE_THICKNESS` in `geometry.ts` — only these three).
 
 ### Model Components
 
