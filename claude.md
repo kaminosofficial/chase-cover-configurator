@@ -666,6 +666,19 @@ The cart row sits at the bottom of the sidebar and matches the styling of Kamino
 
 ---
 
+## Testing & CI (July 2026)
+
+See **[TESTING.md](TESTING.md)** for the full rationale and the porting checklist for the cap repo.
+
+- `npm test` (Vitest, one pass) / `npm run test:watch`. Runs in CI **before** the build.
+- **Scope is deliberately narrow — pure functions only:**
+  - `src/utils/pricing.test.ts` — `computePricingBreakdown()` runs on BOTH the client (display) and the server (variant creation); if they diverge, customers are charged a different amount than shown. Tests pin the formula's *shape*, not the Google Sheet's values (those change without a deploy). Key rules locked: extras are added AFTER gauge/material multipliers, skirt surcharge is `>=` threshold, powder coat is never charged on copper, unknown keys fall back to `1x` not `NaN`.
+  - `src/utils/geometry.test.ts` — `holeWorld()` feeds the 3D model, drag-to-move, the PDF, and the 2D profile drawings. The drawings invert its exact coordinate convention, so a silent shift makes the drawing lie about hole position.
+- **Do NOT write tests for the cart flow.** ~3000 lines of network/DOM orchestration against a live storefront; E2E there is flaky and would still miss the real failure modes (connection drops, Shopify propagation lag). Its safety net is the branch preview + real-phone testing per SHIPPING.md.
+- **When adding a test, prove it can fail** — break the function on purpose, confirm red, restore. Every existing test was verified this way.
+- **ESLint is intentionally NOT in CI**: ~195 real errors, almost all `no-explicit-any` in three.js / `<model-viewer>` / Shopify-global code. A permanently-red pipeline trains you to ignore red. `eslint.config.js` now ignores `dist`, `dist-shopify`, `.claude` (holds full worktree copies of the repo), `scratch`.
+- **`deploy.yml` deleted** — a GitHub Pages workflow that had failed on every push for months (Pages was never enabled; API 404s). Production deploys via Vercel.
+
 ## Debugging
 
 ### Client-Side Debug Logging
