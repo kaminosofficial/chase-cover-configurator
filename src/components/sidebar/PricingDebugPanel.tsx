@@ -4,12 +4,16 @@ import { PRICING, getStormCollarPrice } from '../../config/pricing';
 import { computePricingBreakdown, normalizeMarginRate } from '../../utils/pricing';
 
 /**
- * PRICING VERIFICATION PANEL — preview/dev builds only.
+ * PRICING VERIFICATION PANEL — /preview route on the standalone SPA only.
  *
- * Never appears on the live site: `__PRICING_DEBUG__` is a compile-time
- * constant (vite.config.ts `define`) that is literally `false` on Vercel
- * production deploys, so the bundler removes this component from the shipped
- * bundle rather than merely hiding it.
+ * TWO independent gates keep this away from customers:
+ *
+ *  1. COMPILE TIME — `__PRICING_DEBUG__` (vite.config.ts `define`) is the
+ *     literal `false` in the BUILD_TARGET=shopify bundle, which is the only
+ *     thing the storefront loads. The panel is tree-shaken out of it entirely,
+ *     on every deployment, production or preview.
+ *  2. RUNTIME — even in the SPA it renders only under /preview, so the public
+ *     root of the Vercel site stays clean.
  *
  * The unit tests in src/utils/pricing.test.ts verify the FORMULA using fixed
  * fixtures. They cannot verify that the values currently coming out of the
@@ -17,6 +21,14 @@ import { computePricingBreakdown, normalizeMarginRate } from '../../utils/pricin
  * constants actually loaded, a line-by-line trace of how the displayed price
  * was reached, and five self-checks run against those live constants.
  */
+
+/** True on the /preview route, or anywhere in local dev. */
+function isPricingPreviewRoute(): boolean {
+  if (typeof window === 'undefined') return false;
+  const { pathname, hostname } = window.location;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+  return pathname === '/preview' || pathname.startsWith('/preview/');
+}
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 const num = (n: number) => Number(n.toFixed(4)).toString();
@@ -38,6 +50,9 @@ function Row({ label, value, strong }: { label: string; value: string; strong?: 
 export function PricingDebugPanel() {
   const [open, setOpen] = useState(false);
   const config = useConfigStore(s => s);
+
+  // Second gate: SPA root and any other route stay clean.
+  if (!isPricingPreviewRoute()) return null;
 
   const { w, l, sk, holes, gauge, mat, pc } = config;
 

@@ -58,6 +58,14 @@
     },
     "rewrites": [
         {
+            "source": "/preview",
+            "destination": "/index.html"
+        },
+        {
+            "source": "/ui-concepts",
+            "destination": "/ui-concepts/index.html"
+        },
+        {
             "source": "/chase-cover-configurator.iife.js",
             "destination": "/chase-cover-configurator.iife.js"
         },
