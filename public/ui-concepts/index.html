@@ -62,7 +62,17 @@
   /* live .section-title: 14px / 500, plain — no band, no uppercase, no letter-spacing */
   .cur-section-title{font-size:14px;font-weight:500;color:var(--ink);margin:22px 0 10px;text-transform:none;letter-spacing:normal}
   /* worksheet band: NEW element proposed by the concepts, built only from live palette tokens */
-  .section-band{background:var(--surface-soft);border:0.8px solid var(--ctl-border);border-radius:var(--ctl-radius);padding:10px 14px;font-size:14px;font-weight:500;color:var(--ink);margin-bottom:12px}
+  .section-band{background:var(--surface-soft);border:0.8px solid var(--ctl-border);border-radius:var(--ctl-radius);padding:10px 14px;font-size:14px;font-weight:500;color:var(--ink);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
+  /* One collapse system, shared by the 4 static sections AND the per-hole
+     accordions: default OPEN, ".collapsed" hides the body. Negative logic
+     (rather than a separate "open" class) so a freshly-rendered element with
+     no class at all is open without JS having to add anything. */
+  .chev{font-size:12px;color:var(--text-helper);transition:transform .18s}
+  .section.collapsed .chev,.hole-section.collapsed .chev{transform:rotate(-90deg)}
+  .section.collapsed .section-body{display:none}
+  .section.collapsed .section-band{margin-bottom:0}
+  .hole-section.collapsed .hole-body{display:none}
+  .hole-section.collapsed .hole-head{border-bottom:none}
 
   /* ---- controls: live spec = #fff bg, 0.8px rgba(18,18,18,.05), radius 6px, min-height 52px, 14px/500 ---- */
   .cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
@@ -104,10 +114,8 @@
   .hole-head{display:flex;align-items:center;justify-content:space-between;background:var(--ctl-bg);padding:14px 16px;cursor:pointer;user-select:none;border-bottom:1px solid var(--border-light)}
   .hole-head .t{font-size:14px;font-weight:500;color:var(--ink)}
   .hole-head .meta{font-size:13px;color:var(--text-muted)}
-  .hole-head .chev{transition:transform .2s;color:var(--text-helper);font-size:12px;margin-left:10px}
-  .hole-section.open .chev{transform:rotate(180deg)}
-  .hole-body{display:none;padding:16px}
-  .hole-section.open .hole-body{display:block}
+  .hole-head .chev{transition:transform .18s;color:var(--text-helper);font-size:12px;margin-left:10px}
+  .hole-body{padding:16px}
 
   .choose-title{font-size:14px;font-weight:500;color:var(--ink);margin:14px 0 8px;border-bottom:1px solid var(--border-light);padding-bottom:8px}
   .radio-row{display:flex;align-items:center;gap:9px;padding:7px 0;font-size:14px}
@@ -175,7 +183,6 @@
   .derived-row{font-size:12.5px;color:var(--text-muted);padding:6px 0 2px}
   .derived-row b{color:var(--dim-blue);font-weight:600}
   .chips.two{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .hole-section .hole-head{cursor:default}
   .toggle-row{padding:10px 0}
 
   @media (max-width:767px){
@@ -260,9 +267,10 @@
     <div class="variant" id="view-a">
       <h1>Custom Chase Cover</h1>
       <div class="subtitle">Worksheet-order flow with live 2D drawings. Fully interactive.</div>
-      <div class="section"><div class="section-band">1 · Cover Type</div><div class="cards" id="typeCards"></div></div>
-      <div class="section">
-        <div class="section-band">2 · Material &amp; Gauge</div>
+      <div class="section" data-sec="type"><div class="section-band">1 · Cover Type<span class="chev">▾</span></div><div class="section-body"><div class="cards" id="typeCards"></div></div></div>
+      <div class="section" data-sec="material">
+        <div class="section-band">2 · Material &amp; Gauge<span class="chev">▾</span></div>
+        <div class="section-body">
         <div class="field-row"><span class="field-label">Material</span></div>
         <div class="chips" id="matChips"></div>
         <div style="height:12px"></div>
@@ -276,9 +284,11 @@
             <div class="pc-name" id="pcName"></div>
           </div>
         </div>
+        </div>
       </div>
-      <div class="section">
-        <div class="section-band">3 · Chase Box Options</div>
+      <div class="section" data-sec="chasebox">
+        <div class="section-band">3 · Chase Box Options<span class="chev">▾</span></div>
+        <div class="section-body">
         <div class="fld-grid three">
           <div class="fld"><label>Length (L)</label><div class="num-wrap"><input type="number" id="inL" step="0.125" min="16" max="120"><span class="unit">in</span></div></div>
           <div class="fld"><label>Width (W)</label><div class="num-wrap"><input type="number" id="inW" step="0.125" min="16" max="60"><span class="unit">in</span></div></div>
@@ -289,12 +299,15 @@
         <div class="drawing"><div class="drawing-caption">Top profile</div><div id="svgBoxTop"></div></div>
         <div class="drawing"><div class="drawing-caption">Side profile</div><div id="svgBoxSide"></div></div>
         <div class="note"><b>Measuring tip:</b> Length, Width and Collar should be &frac12;&Prime; bigger than the existing chase / flue to fit over it.</div>
+        </div>
       </div>
       <div id="holesWrap"></div>
-      <div class="section">
-        <div class="section-band" id="mountBandNo">5 · Mounting Options</div>
+      <div class="section" data-sec="mounting">
+        <div class="section-band" id="mountBandNo">5 · Mounting Options<span class="chev">▾</span></div>
+        <div class="section-body">
         <div class="toggle-row"><span class="field-label">Skirt Mounting Holes <small>standard &frac14;&Prime; hole · 4&Prime; in from each edge · 2 per side</small></span><button class="toggle" id="mSkirtToggle"></button></div>
         <div class="toggle-row"><span class="field-label">Top Mounting Holes <small>standard &frac14;&Prime; hole · 2&Prime; in · one in each corner</small></span><button class="toggle" id="mTopToggle"></button></div>
+        </div>
       </div>
       <div class="price-row"><div><div class="price-label">Estimated price</div><div class="price-val" id="price">$0.00</div></div><div class="price-sub">mockup estimate —<br>live pricing unchanged</div></div>
       <button class="btn btn-cart" disabled>Add to cart</button>
@@ -380,9 +393,17 @@ function newHole() {
     hasCollar: true,    // "NO COLLAR" checkbox = !hasCollar
     shape: "round", dia: 10, rw: 8, rl: 10,
     collar: 2, storm: false,
-    vMode: "center", vVal: 11,   // top | bottom | center  (TE / BE / centered on width)
+    // vMode selects which of TE/BE is the live editable field — it is a UI
+    // choice only and never moves the hole by itself. cy is the single
+    // source of truth for vertical position (mirrors cx below). The only
+    // state change that MOVES the hole vertically is explicitly picking
+    // "Centered on width", exactly like the real app's centered<->offset
+    // toggle: switching AWAY from centered preserves the current position,
+    // switching TO centered recentres on purpose.
+    vMode: "center",
     hMode: "center",             // only used when there is a single hole
-    cx: 30                       // absolute centre along L, inches
+    cx: 30,                      // absolute centre along L, inches
+    cy: 24                       // absolute centre along W, inches
   };
 }
 
@@ -400,9 +421,7 @@ const halfH = h => (h.shape === "round" ? h.dia : h.rl) / 2;   // along L
 const halfV = h => (h.shape === "round" ? h.dia : h.rw) / 2;   // along W
 const leftOf = h => h.cx - halfH(h);
 const rightOf = h => h.cx + halfH(h);
-const centreY = h => h.vMode === "top" ? h.vVal + halfV(h)
-  : h.vMode === "bottom" ? state.W - h.vVal - halfV(h)
-    : state.W / 2;
+const centreY = h => Math.min(Math.max(h.cy, halfV(h)), state.W - halfV(h));
 
 /** Holes that actually get cut, in left-to-right order. */
 function activeHoles() {
@@ -413,9 +432,9 @@ function activeIndex(h) { return activeHoles().indexOf(h); }
 
 /** Spread holes evenly for the chosen type. */
 function layoutDefaults() {
-  const { L, type } = state;
+  const { L, W, type } = state;
   const hs = state.holes.slice(0, type);
-  hs.forEach((h, i) => { h.cx = L * (i + 1) / (type + 1); });
+  hs.forEach((h, i) => { h.cx = L * (i + 1) / (type + 1); h.cy = W / 2; });
 }
 layoutDefaults();
 
@@ -431,8 +450,13 @@ function measure() {
 function clampInside(h) {
   h.cx = Math.min(Math.max(h.cx, halfH(h)), state.L - halfH(h));
 }
+function clampInsideV(h) {
+  h.cy = Math.min(Math.max(h.cy, halfV(h)), state.W - halfV(h));
+}
 function setLE(h, v) { h.cx = v + halfH(h); clampInside(h); }
 function setRE(h, v) { h.cx = state.L - v - halfH(h); clampInside(h); }
+function setTE(h, v) { h.cy = v + halfV(h); clampInsideV(h); }
+function setBE(h, v) { h.cy = state.W - v - halfV(h); clampInsideV(h); }
 /** Gap between this hole and the previous active one. */
 function setGapBefore(h, v) {
   const act = activeHoles(); const i = act.indexOf(h);
@@ -634,7 +658,7 @@ function holeControlsHTML(i, pfx) {
     const lbl = m2 === "top" ? `Top edge (TE${n})` : m2 === "bottom" ? `Bottom edge (BE${n})` : "Centered on width";
     const v = m2 === "top" ? centreY(h) - halfV(h) : state.W - centreY(h) - halfV(h);
     const input = m2 !== "center"
-      ? `<div class="num-wrap sm"><input type="number" step="0.125" min="0" data-h="${i}" data-k="vVal" value="${f8(v)}" ${h.vMode !== m2 || off ? "disabled" : ""}><span class="unit">in</span></div>` : "";
+      ? `<div class="num-wrap sm"><input type="number" step="0.125" min="0" data-h="${i}" data-k="${m2 === "top" ? "TE" : "BE"}" value="${f8(v)}" ${h.vMode !== m2 || off ? "disabled" : ""}><span class="unit">in</span></div>` : "";
     return `<div class="radio-row ${h.vMode !== m2 ? "disabled" : ""}">
       <input type="radio" name="${pfx}v${i}" id="${pfx}v${i}${m2}" data-h="${i}" data-vmode="${m2}" ${h.vMode === m2 ? "checked" : ""} ${dis}>
       <label for="${pfx}v${i}${m2}">${lbl}</label>${input}</div>`;
@@ -694,7 +718,13 @@ function bindHoleControls(wrap) {
     renderAll();
   });
   wrap.querySelectorAll("input[type=radio][data-vmode]").forEach(el => el.onchange = () => {
-    state.holes[+el.dataset.h].vMode = el.dataset.vmode; renderAll();
+    const h = state.holes[+el.dataset.h];
+    // Only an EXPLICIT "Centered on width" pick moves the hole. Switching
+    // between Top edge / Bottom edge (or away from centered) never jumps
+    // the position — cy is untouched, only which field is editable changes.
+    if (el.dataset.vmode === "center") h.cy = state.W / 2;
+    h.vMode = el.dataset.vmode;
+    renderAll();
   });
   wrap.querySelectorAll("input[type=radio][data-hmode]").forEach(el => el.onchange = () => {
     const h = state.holes[+el.dataset.h]; h.hMode = el.dataset.hmode;
@@ -703,7 +733,9 @@ function bindHoleControls(wrap) {
   });
   wrap.querySelectorAll(".chip[data-shape]").forEach(el => el.onclick = () => {
     const h = state.holes[+el.dataset.h]; h.shape = el.dataset.shape;
-    if (h.shape === "rect") h.storm = false; renderAll();
+    if (h.shape === "rect") h.storm = false;
+    clampInside(h); clampInsideV(h); // round <-> rect can change half-extents
+    renderAll();
   });
   wrap.querySelectorAll(".toggle[data-t=storm]").forEach(el => el.onclick = () => {
     const h = state.holes[+el.dataset.h]; h.storm = !h.storm; renderAll();
@@ -716,7 +748,17 @@ function bindHoleControls(wrap) {
       else if (k === "RE") setRE(h, v);
       else if (k === "gapBefore") setGapBefore(h, v);
       else if (k === "gapAfter") setGapAfter(h, v);
-      else h[k] = v;
+      else if (k === "TE") setTE(h, v);
+      else if (k === "BE") setBE(h, v);
+      else {
+        h[k] = v;
+        // dia/rl/rw change the hole's half-extents. The position (cx/cy) is
+        // untouched by a resize, so it must be re-clamped or a large enough
+        // hole can render past the cover edge while the input shows a number
+        // that looks perfectly valid.
+        if (k === "dia" || k === "rl") clampInside(h);
+        if (k === "dia" || k === "rw") clampInsideV(h);
+      }
     };
     // Re-render on EVERY keystroke: LE/RE/B2/B3 are interdependent, so typing
     // into one must immediately correct the others. Focus and caret are
@@ -727,19 +769,38 @@ function bindHoleControls(wrap) {
   });
 }
 
+/* Collapse state for pieces of Concept A that JS rebuilds from scratch on
+   every render (so a plain CSS class would be wiped each time). The 4 STATIC
+   sections don't need this — their DOM nodes are never recreated, so a class
+   toggle on them persists by itself; see initStaticSectionCollapse(). */
+let holeOptionsCollapsed = false;
+const holeSectionCollapsed = [false, false, false];
+
 function renderHoles() {
   const wrap = $("holesWrap");
-  wrap.innerHTML = `<div class="section"><div class="section-band">4 · Hole Options</div>` +
+  wrap.innerHTML = `<div class="section${holeOptionsCollapsed ? " collapsed" : ""}" data-sec="holes">
+      <div class="section-band">4 · Hole Options<span class="chev">▾</span></div>
+      <div class="section-body">` +
     state.holes.slice(0, state.type).map((h, i) => `
-      <div class="hole-section open">
+      <div class="hole-section${holeSectionCollapsed[i] ? " collapsed" : ""}" data-hole-sec="${i}">
         <div class="hole-head"><span class="t">Hole #${i + 1} Options</span>
-          <span class="meta">${h.enabled ? (h.shape === "round" ? "⌀" + fmt(h.dia) : fmt(h.rl) + "×" + fmt(h.rw)) : "no hole"}</span></div>
+          <span class="meta">${h.enabled ? (h.shape === "round" ? "⌀" + fmt(h.dia) : fmt(h.rl) + "×" + fmt(h.rw)) : "no hole"}<span class="chev">▾</span></span></div>
         <div class="hole-body">
           <div class="drawing"><div class="drawing-caption">Hole #${i + 1} — top profile</div><div id="asvgTop${i}"></div></div>
           ${holeControlsHTML(i, "a")}
           <div class="drawing"><div class="drawing-caption">Hole #${i + 1} — side profile</div><div id="asvgSide${i}"></div></div>
         </div>
-      </div>`).join("") + `</div>`;
+      </div>`).join("") + `</div></div>`;
+
+  wrap.querySelector('[data-sec="holes"] > .section-band').onclick = () => {
+    holeOptionsCollapsed = !holeOptionsCollapsed;
+    wrap.querySelector('[data-sec="holes"]').classList.toggle("collapsed", holeOptionsCollapsed);
+  };
+  wrap.querySelectorAll(".hole-head").forEach(el => el.onclick = () => {
+    const i = +el.closest(".hole-section").dataset.holeSec;
+    holeSectionCollapsed[i] = !holeSectionCollapsed[i];
+    el.closest(".hole-section").classList.toggle("collapsed", holeSectionCollapsed[i]);
+  });
   bindHoleControls(wrap);
 }
 
@@ -891,6 +952,13 @@ document.querySelectorAll(".cb-btn").forEach(b => b.onclick = () => {
   document.querySelector(".sidebar").scrollTop = 0;
 });
 document.querySelectorAll(".c-tab").forEach(t => t.onclick = () => { goCPane(+t.dataset.pane); renderAll(); });
+
+/* Static sections (Cover Type / Material / Chase Box / Mounting) are written
+   once in the page HTML and never rebuilt by JS, so a simple class toggle
+   here persists on its own — no re-render needed, and nothing to lose. */
+document.querySelectorAll('#view-a > .section[data-sec] > .section-band').forEach(band => {
+  band.onclick = () => band.parentElement.classList.toggle("collapsed");
+});
 
 renderAll();
 
