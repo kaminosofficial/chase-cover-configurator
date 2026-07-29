@@ -679,7 +679,7 @@ Everything in this block was built in the last three days and is **live on chase
 | Jul 29 | **Pricing verification panel** (#10, #11) — `src/components/sidebar/PricingDebugPanel.tsx`. Shows live sheet constants, a line-by-line formula trace, and 5 self-checks. | ❌ no |
 | Jul 29 | **`/ui-concepts` + `/preview` review pages** (#11) — static UI-concept mockups and the SPA-with-panel, via `public/` + `vercel.json` rewrites. | ❌ chase-specific, port only if wanted |
 
-**Unresolved question for the client (both projects):** the sheet has `MARGIN_RATE = 3`, which the code reads as **+300%** (×4) — a $431.80 subtotal becomes $1727.20. That is genuinely what the live site charges today. If 3% was intended, the sheet needs `0.03`. Surfaced by the new pricing panel.
+**`MARGIN_RATE = 3` is CORRECT and intentional — do NOT "fix" it.** The client confirmed this on 29 Jul 2026. The code reads it as **+300%** (×4), so a $431.80 subtotal becomes $1727.20, and that is the intended retail price. It looks like a units bug (3 vs 0.03) and the new pricing panel surfaces it prominently, so it will keep drawing attention — leave it alone. Changing it to `0.03` would cut every price by ~99%. The same value applies on the chimney cap.
 
 ### The `__PRICING_DEBUG__` isolation pattern (important — replicate exactly)
 

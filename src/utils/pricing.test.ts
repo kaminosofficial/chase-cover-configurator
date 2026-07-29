@@ -149,6 +149,14 @@ describe('unknown lookup keys fall back to 1x instead of NaN', () => {
 });
 
 describe('normalizeMarginRate', () => {
+  // NOTE: the live Google Sheet has MARGIN_RATE = 3, i.e. +300% (x4). The client
+  // confirmed on 29 Jul 2026 that this is intentional and correct. It reads like
+  // a units bug (3 vs 0.03) — it is not. Do not "fix" it; 0.03 would cut every
+  // price by ~99%.
+  it('leaves 3 as 3 (the live sheet value, +300%) rather than treating it as a percentage', () => {
+    expect(normalizeMarginRate(3)).toBe(3);
+  });
+
   it('passes a fractional rate through unchanged', () => {
     expect(normalizeMarginRate(0.35)).toBe(0.35);
   });
