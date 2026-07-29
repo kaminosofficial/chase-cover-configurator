@@ -666,6 +666,34 @@ The cart row sits at the bottom of the sidebar and matches the styling of Kamino
 
 ---
 
+## ⚠️ RECENT CHANGES — July 27–29, 2026 (NOT YET PORTED TO THE CHIMNEY CAP)
+
+Everything in this block was built in the last three days and is **live on chase but absent from the cap repo**. When working on the chimney cap configurator, treat this as the to-do list. Full step-by-step porting instructions: **[TESTING.md](TESTING.md)** (bottom section).
+
+| Date | Change | Ported to cap? |
+|---|---|---|
+| Jul 27 | **Mobile 3D viewer no longer sticky** (#8) — removed the `IntersectionObserver` + light-DOM spacer from `shopify-entry.tsx`. Client wanted it to flow with the page. Cap has byte-identical code, so it has the same sticky behaviour. | ❌ no |
+| Jul 29 | **Vitest unit-test harness** (#10) — 41 tests over `src/utils/pricing.ts` + `src/utils/geometry.ts`. Runs in CI before the build. | ❌ no |
+| Jul 29 | **Dead `deploy.yml` deleted** (#10) — a GitHub Pages workflow that had failed on *every* push for months (Pages was never enabled; API 404s). It painted a red ✗ on every merge, training everyone to ignore red CI. **Check the cap for the same file.** | ❌ no |
+| Jul 29 | **ESLint ignores widened** (#10) — `dist-shopify`, `.claude`, `scratch`. `.claude/worktrees/` holds full throwaway repo copies; linting them inflated the report 205 → 375. | ❌ no |
+| Jul 29 | **Pricing verification panel** (#10, #11) — `src/components/sidebar/PricingDebugPanel.tsx`. Shows live sheet constants, a line-by-line formula trace, and 5 self-checks. | ❌ no |
+| Jul 29 | **`/ui-concepts` + `/preview` review pages** (#11) — static UI-concept mockups and the SPA-with-panel, via `public/` + `vercel.json` rewrites. | ❌ chase-specific, port only if wanted |
+
+**Unresolved question for the client (both projects):** the sheet has `MARGIN_RATE = 3`, which the code reads as **+300%** (×4) — a $431.80 subtotal becomes $1727.20. That is genuinely what the live site charges today. If 3% was intended, the sheet needs `0.03`. Surfaced by the new pricing panel.
+
+### The `__PRICING_DEBUG__` isolation pattern (important — replicate exactly)
+
+The pricing panel must **never** reach a customer, because it exposes the margin structure. Two independent gates:
+
+1. **Compile time** — `__PRICING_DEBUG__` is a `define` in `vite.config.ts` set to `!isShopifyBundle` (i.e. `buildTarget === 'shopify'`). The Shopify IIFE is a *separate build*, so the flag is the literal `false` there and the panel is **tree-shaken out**, not merely hidden — on every deployment, production or preview.
+2. **Runtime** — inside the SPA it renders only under `/preview` (or localhost), so the public root of the Vercel site stays clean.
+
+An earlier version gated on `VERCEL_ENV`, which was **weaker** — the Shopify IIFE on a *preview* deployment still contained the panel. Do not regress to that.
+
+Verify after any change with: build both bundles, then `grep -c "Pricing verification" dist-shopify/chase-cover-configurator.iife.js` — it must be `0`.
+
+---
+
 ## Testing & CI (July 2026)
 
 See **[TESTING.md](TESTING.md)** for the full rationale and the porting checklist for the cap repo.
@@ -678,6 +706,25 @@ See **[TESTING.md](TESTING.md)** for the full rationale and the porting checklis
 - **When adding a test, prove it can fail** — break the function on purpose, confirm red, restore. Every existing test was verified this way.
 - **ESLint is intentionally NOT in CI**: ~195 real errors, almost all `no-explicit-any` in three.js / `<model-viewer>` / Shopify-global code. A permanently-red pipeline trains you to ignore red. `eslint.config.js` now ignores `dist`, `dist-shopify`, `.claude` (holds full worktree copies of the repo), `scratch`.
 - **`deploy.yml` deleted** — a GitHub Pages workflow that had failed on every push for months (Pages was never enabled; API 404s). Production deploys via Vercel.
+
+### Pricing verification panel (`/preview`)
+
+`src/components/sidebar/PricingDebugPanel.tsx`. The unit tests verify the *formula* against fixed fixtures; they cannot tell you whether the values currently coming out of the Google Sheet are sane. This panel closes that gap — it shows the constants actually loaded (and warns in red if the sheet failed and it fell back to `DEFAULT_PRICING`), a line-by-line trace of how the displayed price was reached, and five self-checks run against those live constants:
+
+1. base geometry = L + W + 4 × skirt
+2. hole cost is flat, not multiplied by gauge
+3. powder coat is not charged on copper
+4. skirt surcharge starts **at** the threshold, not above it
+5. total = subtotal × (1 + margin)
+
+Reachable at `https://chase-cover-configurator.vercel.app/preview` (production, public but unlinked) and on localhost in dev. See the `__PRICING_DEBUG__` isolation note in the RECENT CHANGES block above — the Shopify bundle must always contain **0** occurrences of it.
+
+### Review pages on Vercel
+
+- `/ui-concepts` — static page (`public/ui-concepts/index.html`) with three switchable UI concepts: Current UI, Concept A (worksheet scroll), Concept B (compact tabs). Built for client sign-off on the worksheet redesign; self-contained, no app code.
+- `/preview` — the standalone SPA with the pricing panel.
+
+Both are served via `vercel.json` rewrites and are **never loaded by Shopify**, which only pulls the IIFE.
 
 ## Debugging
 

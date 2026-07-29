@@ -1,5 +1,9 @@
 # Testing & CI harness
 
+> **Built July 27–29, 2026. None of this exists in the chimney cap repo yet.**
+> The porting checklist at the bottom covers every change from those three days
+> and is written to be handed straight to Claude Code in the cap project.
+
 What automated checking exists, why it's deliberately small, and **how to
 replicate it on the chimney cap configurator** (see the porting checklist at the
 bottom — that section is written to be handed straight to Claude Code in the
@@ -115,8 +119,37 @@ then restore. Every test in these two files was verified this way.
 
 ## Porting checklist — chimney cap configurator
 
-The cap repo shares the pricing module and cart architecture, so this transfers
-almost directly. Steps:
+**Everything below was built on chase between 27–29 July 2026 and does NOT exist
+in the cap repo.** The cap shares the pricing module, cart architecture and
+`shopify-entry.tsx` almost byte-for-byte, so most of it transfers directly.
+
+Work on a branch and open a PR — never straight to `main` (see SHIPPING.md).
+
+### Part 0 — the non-test changes from the same window
+
+These are not testing work but were made in the same three days and the cap
+needs them too:
+
+**a. Mobile 3D viewer should not be sticky** (chase PR #8, 27 Jul).
+Delete the `setupMobileStickyScroll()` block from `src/shopify-entry.tsx` — the
+`IntersectionObserver`, the `scroll`/`resize`/`touchend` listeners, and the
+zero-height light-DOM spacer it injects before the mount element. Add a cleanup
+line that removes any stale spacer left by a cached bundle. The mobile
+`.viewport` CSS rule already defaults to `position: relative`, so no CSS
+behaviour change is needed — keep `relative` (absolutely-positioned children
+depend on it) and just fix the stale comments. Re-run the CSS sync afterwards.
+**This cannot be verified on a local preview** — the sticky code only ran inside
+the Shopify embed, so it needs checking on the live store after deploy.
+
+**b. Delete a dead `deploy.yml` if the cap has one.**
+Check with `gh run list --workflow=deploy.yml --limit 5`. On chase it had failed
+on every push for months because GitHub Pages was never enabled
+(`gh api repos/<owner>/<repo>/pages` returned 404), so every merge painted a red
+✗ for a target nobody used — which trains people to ignore red CI.
+
+**c. Pricing verification panel** — see Part 2 below.
+
+### Part 1 — the test harness
 
 1. `npm install -D vitest@^3`
 2. Add to `package.json` scripts:
@@ -144,3 +177,60 @@ almost directly. Steps:
 
 Do **not** port: any attempt to test the cart flow, and do not add lint to CI
 without checking the cap's own error count first.
+
+### Part 2 — pricing verification panel
+
+Copy `src/components/sidebar/PricingDebugPanel.tsx` and wire it into the cap's
+sidebar. **The isolation pattern must be replicated exactly** — this panel
+exposes the margin structure, so it must never reach a customer.
+
+1. In `vite.config.ts`, inside the existing `define` block:
+   ```ts
+   const isShopifyBundle = buildTarget === 'shopify'
+   // ...
+   __PRICING_DEBUG__: JSON.stringify(!isShopifyBundle),
+   ```
+   Gate on the **build target**, not `VERCEL_ENV`. The Shopify IIFE is a
+   separate build, so this makes the flag a literal `false` there and the panel
+   is tree-shaken out on *every* deployment. An earlier chase version gated on
+   `VERCEL_ENV` and was weaker: the IIFE on a preview deployment still contained
+   the panel.
+2. Declare the global in `src/vite-env.d.ts`:
+   ```ts
+   declare const __PRICING_DEBUG__: boolean;
+   ```
+3. Render it gated: `{__PRICING_DEBUG__ && <PricingDebugPanel />}`. The component
+   itself carries a second runtime gate (`/preview` route or localhost).
+4. Adjust the five self-checks to the cap's own pricing rules — drop any that
+   don't apply (e.g. if the cap has no skirt surcharge) rather than leaving a
+   check that always passes.
+5. **Verify both directions before pushing:**
+   ```bash
+   npm run build:vercel
+   grep -c "Pricing verification" dist-shopify/chase-cover-configurator.iife.js   # MUST be 0
+   grep -l "Pricing verification" dist/assets/*.js                                 # MUST match one file
+   ```
+   Do not verify by curling a branch-preview URL — Vercel branch previews sit
+   behind an SSO redirect, so you will grep a 15-byte "Redirecting..." page and
+   get a meaningless `0`.
+
+### Part 3 — review pages (optional, chase-specific)
+
+`/ui-concepts` (static mockups) and `/preview` (SPA + panel) are served from
+`public/` plus two `vercel.json` rewrites:
+
+```json
+{ "source": "/preview",     "destination": "/index.html" },
+{ "source": "/ui-concepts", "destination": "/ui-concepts/index.html" }
+```
+
+Do **not** add a `comment` key to a rewrite object — it is not in Vercel's
+schema and risks failing the deploy. Note these production URLs are public but
+unlinked; `/preview` reveals cost structure to anyone who guesses the path.
+
+### Verifying the port
+
+- `npm test` and `npm run build:vercel` both green
+- Mutation-test: break the cap's pricing formula on purpose, confirm red, restore
+- `grep -c "Pricing verification"` on the cap's Shopify IIFE returns `0`
+- The sticky-viewer fix checked on the **live cap store on a phone**, not a preview
