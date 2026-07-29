@@ -7,6 +7,7 @@ import { ToggleRow } from './ToggleRow';
 import { PowderCoatSection } from './PowderCoatSection';
 import { PriceDisplay } from './PriceDisplay';
 import { CartRow } from './CartRow';
+import { PricingDebugPanel } from './PricingDebugPanel';
 import { useConfigStore } from '../../store/configStore';
 import { InfoTooltip } from './InfoTooltip';
 
@@ -93,6 +94,10 @@ export function Sidebar({ onOpenRal, onAddToCart, onBuyNow, isSubmitting = false
             {pc && <PowderCoatSection onOpenRal={onOpenRal} />}
           </div>
         )}
+
+        {/* Preview/dev only — `__PRICING_DEBUG__` is a compile-time false on
+            production deploys, so this is stripped from the live bundle. */}
+        {__PRICING_DEBUG__ && <PricingDebugPanel />}
 
       </div>
 

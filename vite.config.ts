@@ -60,6 +60,14 @@ export default defineConfig(({ mode }) => {
   const buildTarget = env.BUILD_TARGET || process.env.BUILD_TARGET
   const isBuild = env.NODE_ENV === 'production' || buildTarget !== undefined
 
+  // Vercel sets VERCEL_ENV to 'production' only for production deployments;
+  // branch/PR previews get 'preview'. The pricing verification panel is compiled
+  // in EVERYWHERE EXCEPT a production deploy — because this is a `define`, the
+  // flag becomes a literal `false` there and the whole panel is tree-shaken out
+  // of the live bundle rather than merely hidden at runtime.
+  const vercelEnv = env.VERCEL_ENV || process.env.VERCEL_ENV || ''
+  const isProductionDeploy = vercelEnv === 'production'
+
   return {
     plugins: [
       {
@@ -96,6 +104,7 @@ export default defineConfig(({ mode }) => {
     ].filter(Boolean),
     define: {
       __LOCAL_IP__: JSON.stringify(getLocalIP()),
+      __PRICING_DEBUG__: JSON.stringify(!isProductionDeploy),
       ...(isBuild && {
         'process.env.NODE_ENV': JSON.stringify('production'),
         'process.env': JSON.stringify({}),
