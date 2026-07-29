@@ -24,6 +24,10 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      # Unit tests for the money-critical pure functions (pricing formula,
+      # hole-placement maths). Fast — no browser, no network, no Shopify.
+      - name: Unit tests
+        run: npm test
       # `build:vercel` runs `tsc -b` (full type-check) + both production bundles.
       # Green = it compiles and bundles cleanly. Red = something is broken.
       - name: Type-check & production build

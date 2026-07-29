@@ -6,7 +6,10 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // `dist-shopify` is build output; `.claude/worktrees` holds full throwaway
+  // copies of this repo created by tooling — linting either just doubles the
+  // report with noise about generated or duplicated code.
+  globalIgnores(['dist', 'dist-shopify', '.claude', 'scratch']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
