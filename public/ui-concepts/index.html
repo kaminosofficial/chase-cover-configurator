@@ -35,13 +35,12 @@
   body{font-family:var(--sans);background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
 
   /* ======== concept switcher bar (preview chrome only, not part of any design) ======== */
-  .concept-bar{position:sticky;top:0;z-index:50;background:#2f2924;padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .concept-bar .cb-title{color:#f3ece4;font-size:12px;font-weight:600;letter-spacing:.04em;margin-right:6px;white-space:nowrap}
+  .concept-bar{position:sticky;top:0;z-index:50;background:#2f2924;padding:14px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .concept-bar .cb-title{color:#f3ece4;font-size:16px;font-weight:700;letter-spacing:.03em;margin-right:8px;white-space:nowrap}
   .cb-btns{display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}
-  .cb-btn{flex:none;border:1px solid #6b6157;background:transparent;color:#e8e0d5;border-radius:6px;padding:7px 14px;font-size:12.5px;font-weight:600;font-family:var(--sans);cursor:pointer;white-space:nowrap;transition:all .15s}
+  .cb-btn{flex:none;border:1.5px solid #6b6157;background:transparent;color:#e8e0d5;border-radius:8px;padding:11px 20px;font-size:14.5px;font-weight:600;font-family:var(--sans);cursor:pointer;white-space:nowrap;transition:all .15s}
   .cb-btn:hover{border-color:var(--tan)}
   .cb-btn.active{background:var(--tan);border-color:var(--tan);color:#fff}
-  .cb-note{color:#9a8f84;font-size:11px;width:100%;padding-top:2px}
 
   .layout{display:flex;min-height:calc(100vh - 54px)}
   /* live: .viewport is white; the grey comes from the .viewport-bg layer */
@@ -186,15 +185,14 @@
   .toggle-row{padding:10px 0}
 
   @media (max-width:767px){
-    /* Switcher: lay the 4 buttons out as a 2x2 grid so every concept is
-       reachable without horizontal scrolling (they used to overflow off-screen). */
-    .concept-bar{padding:8px 10px;gap:6px}
-    .concept-bar .cb-title{width:100%;margin-right:0;font-size:11px}
-    .cb-btns{display:grid;grid-template-columns:1fr 1fr;gap:6px;width:100%;overflow-x:visible}
+    /* Switcher: lay the 3 buttons out as a 2-up grid (3rd spans full width)
+       so every concept is reachable without horizontal scrolling (they used
+       to overflow off-screen). */
+    .concept-bar{padding:10px 12px;gap:8px}
+    .concept-bar .cb-title{width:100%;margin-right:0;font-size:13px}
+    .cb-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;overflow-x:visible}
     .cb-btn:last-child{grid-column:1/-1}
-    .cb-btn{width:100%;min-height:42px;padding:9px 6px;font-size:12px;white-space:normal;line-height:1.25;display:flex;align-items:center;justify-content:center;text-align:center}
-    .cb-note{font-size:10px;line-height:1.35;padding-top:1px}
-    .cb-note-long{display:none}
+    .cb-btn{width:100%;min-height:44px;padding:10px 6px;font-size:13px;white-space:normal;line-height:1.25;display:flex;align-items:center;justify-content:center;text-align:center}
     .layout{display:block}
     .viewer{height:32vh}
     .sidebar{width:100%;min-width:0;max-width:none;max-height:none;border-left:none;border-top:1px solid var(--border-light)}
@@ -218,7 +216,6 @@
     <button class="cb-btn" data-view="a">Concept A · Worksheet</button>
     <button class="cb-btn" data-view="c">Concept B · Compact tabs</button>
   </div>
-  <span class="cb-note">Tap a concept to preview it.<span class="cb-note-long"> Your entered dimensions carry across concepts. 3D viewer is a placeholder image — the real one is unchanged.</span></span>
 </div>
 <div class="layout">
   <div class="viewer">
@@ -232,32 +229,35 @@
       <h1>Chase Cover Configurator</h1>
       <div class="subtitle">Replica of the UI that is live today, for comparison.</div>
       <div class="cur-section-title">Cover Dimensions</div>
-      <div class="field-row"><span class="field-label">Length (in)</span><div class="num-wrap"><input type="number" value="60" data-bind="L"><span class="unit">in</span></div></div>
-      <div class="field-row"><span class="field-label">Width (in)</span><div class="num-wrap"><input type="number" value="48" data-bind="W"><span class="unit">in</span></div></div>
-      <div class="field-row"><span class="field-label">Skirt (in)</span><div class="num-wrap"><input type="number" value="3" data-bind="S"><span class="unit">in</span></div></div>
+      <!-- Live site keeps L/W/S on ONE row (label above input, 3 columns) — see
+           the reference screenshot. Reuses the same fld-grid pattern as
+           Concept A's Chase Box Options so both match the real layout. -->
+      <div class="fld-grid three">
+        <div class="fld"><label>Length (in)</label><div class="num-wrap"><input type="number" step="0.125" min="16" max="120" data-bind="L"><span class="unit">in</span></div></div>
+        <div class="fld"><label>Width (in)</label><div class="num-wrap"><input type="number" step="0.125" min="16" max="60" data-bind="W"><span class="unit">in</span></div></div>
+        <div class="fld"><label>Skirt (in)</label><div class="num-wrap"><input type="number" step="0.125" min="1" max="12" data-bind="S"><span class="unit">in</span></div></div>
+      </div>
       <label class="check-row"><input type="checkbox"> Show Side Labels (Top / Right / Bottom / Left)</label>
       <div class="cur-section-title">Options</div>
       <div class="toggle-row"><span class="field-label">Drip Edge</span><button class="toggle on" data-btoggle="drip"></button></div>
       <div class="toggle-row"><span class="field-label">Diagonal Crease</span><button class="toggle on" data-btoggle="xbend"></button></div>
       <div class="cur-section-title">Flue Holes</div>
-      <div class="cur-hole-btns">
-        <button class="cur-hole-btn">No Hole</button>
-        <button class="cur-hole-btn active">1 Hole</button>
-        <button class="cur-hole-btn">2 Holes</button>
-        <button class="cur-hole-btn">3 Holes</button>
-      </div>
+      <div class="cur-hole-btns" id="curHoleBtns"></div>
       <div style="height:12px"></div>
-      <div class="field-row"><span class="field-label">Hole 1 — Diameter (in)</span><div class="num-wrap"><input type="number" value="10"><span class="unit">in</span></div></div>
-      <div class="field-row"><span class="field-label">Collar Height (in)</span><div class="num-wrap"><input type="number" value="2"><span class="unit">in</span></div></div>
-      <label class="check-row"><input type="checkbox" checked> Centered on Cover</label>
-      <label class="check-row"><input type="checkbox"> Add Storm Collar</label>
+      <div id="curHolesWrap"></div>
       <div class="cur-section-title">Material</div>
-      <div class="chips"><button class="chip active">Galvanized Steel</button><button class="chip">Copper</button></div>
+      <div class="chips" id="curMatChips"></div>
       <div style="height:10px"></div>
       <div class="field-row"><span class="field-label">Gauge</span></div>
-      <div class="chips"><button class="chip active">24 ga</button><button class="chip">22 ga</button><button class="chip">20 ga</button></div>
-      <div class="cur-section-title">Powder Coating</div>
-      <div class="toggle-row"><span class="field-label">Color Options</span><button class="toggle"></button></div>
+      <div class="chips" id="curGaugeChips"></div>
+      <div id="curPcBlock">
+        <div class="cur-section-title">Powder Coating</div>
+        <div class="toggle-row"><span class="field-label">Color Options</span><button class="toggle" id="curPcToggle"></button></div>
+        <div id="curPcColors" style="display:none">
+          <div class="swatches" id="curSwatches"></div>
+          <div class="pc-name" id="curPcName"></div>
+        </div>
+      </div>
       <div class="price-row"><div><div class="price-label">Estimated price</div><div class="price-val" id="cur-price">$0.00</div></div><div class="price-sub">reference only</div></div>
       <button class="btn btn-cart" disabled>Add to cart</button>
       <button class="btn btn-shop" disabled>Buy with 🛍 Shop</button>
@@ -614,11 +614,17 @@ function renderTypeCards() {
 }
 
 function renderChips() {
-  $("matChips").innerHTML = ["galvanized", "copper"].map(m =>
+  // Material: matChips (Concept A) + curMatChips (Current UI replica) share
+  // one wiring loop, same pattern already used for gauge below.
+  const matHTML = ["galvanized", "copper"].map(m =>
     `<button class="chip ${state.material === m ? "active" : ""}" data-m="${m}">${m === "galvanized" ? "Galvanized Steel" : "Copper"}</button>`).join("");
-  document.querySelectorAll("#matChips .chip").forEach(el => el.onclick = () => { state.material = el.dataset.m; renderAll(); });
+  ["matChips", "curMatChips"].forEach(cid => {
+    const el = $(cid); if (!el) return;
+    el.innerHTML = matHTML;
+    el.querySelectorAll(".chip").forEach(c => c.onclick = () => { state.material = c.dataset.m; renderAll(); });
+  });
   const gaugeHTML = GAUGES.map(g => `<button class="chip ${state.gauge === g ? "active" : ""}" data-g="${g}">${g} ga</button>`).join("");
-  ["gaugeChips", "cGauge"].forEach(cid => {
+  ["gaugeChips", "cGauge", "curGaugeChips"].forEach(cid => {
     const el = $(cid); if (!el) return;
     el.innerHTML = gaugeHTML;
     el.querySelectorAll(".chip").forEach(c => c.onclick = () => { state.gauge = c.dataset.g; renderAll(); });
@@ -627,12 +633,23 @@ function renderChips() {
   $("pcToggle").className = "toggle" + (state.pc ? " on" : "");
   $("pcColors").style.display = state.pc ? "" : "none";
   $("swatches").innerHTML = RAL.map((c, i) => `<div class="sw ${state.pcIdx === i ? "active" : ""}" data-i="${i}" style="background:${c[0]}"></div>`).join("");
-  document.querySelectorAll(".sw").forEach(el => el.onclick = () => { state.pcIdx = +el.dataset.i; renderAll(); });
+  document.querySelectorAll("#swatches .sw").forEach(el => el.onclick = () => { state.pcIdx = +el.dataset.i; renderAll(); });
   $("pcName").textContent = RAL[state.pcIdx][1];
   document.querySelectorAll("[data-mat]").forEach(el => {
     el.classList.toggle("active", el.dataset.mat === state.material);
     el.onclick = () => { state.material = el.dataset.mat; renderAll(); };
   });
+
+  // Current UI's own Powder Coating block (separate ids, same behaviour).
+  if ($("curPcBlock")) {
+    $("curPcBlock").style.display = state.material === "galvanized" ? "" : "none";
+    $("curPcToggle").className = "toggle" + (state.pc ? " on" : "");
+    $("curPcToggle").onclick = () => { state.pc = !state.pc; renderAll(); };
+    $("curPcColors").style.display = state.pc ? "" : "none";
+    $("curSwatches").innerHTML = RAL.map((c, i) => `<div class="sw ${state.pcIdx === i ? "active" : ""}" data-i="${i}" style="background:${c[0]}"></div>`).join("");
+    document.querySelectorAll("#curSwatches .sw").forEach(el => el.onclick = () => { state.pcIdx = +el.dataset.i; renderAll(); });
+    $("curPcName").textContent = RAL[state.pcIdx][1];
+  }
 }
 
 /* ---------- per-hole controls (shared by both concepts) ---------- */
@@ -901,8 +918,55 @@ function renderAllPreservingFocus() {
   if (keep.s != null) { try { el.setSelectionRange(keep.s, keep.s); } catch (e) { /* number inputs */ } }
 }
 
+/* ---------- "Current UI" replica: hole count 0-3 + per-hole fields ---------- */
+const CUR_HOLE_OPTS = [
+  { n: 0, label: "No Hole" }, { n: 1, label: "1 Hole" },
+  { n: 2, label: "2 Holes" }, { n: 3, label: "3 Holes" },
+];
+function renderCurrentUI() {
+  const btns = $("curHoleBtns"), wrap = $("curHolesWrap");
+  if (!btns || !wrap) return;
+  btns.innerHTML = CUR_HOLE_OPTS.map(o =>
+    `<button class="cur-hole-btn${state.type === o.n ? " active" : ""}" data-n="${o.n}">${o.label}</button>`).join("");
+  btns.querySelectorAll(".cur-hole-btn").forEach(el => el.onclick = () => {
+    state.type = +el.dataset.n;
+    state.holes.forEach(h => { h.enabled = true; });
+    layoutDefaults(); renderAll();
+  });
+
+  wrap.innerHTML = Array.from({ length: state.type }, (_, i) => i).map(i => {
+    const h = state.holes[i], n = i + 1;
+    return `
+      <div class="field-row"><span class="field-label">Hole ${n} — Diameter (in)</span><div class="num-wrap"><input type="number" step="0.125" min="3" max="30" data-h="${i}" data-k="dia" value="${f8(h.dia)}"><span class="unit">in</span></div></div>
+      <div class="field-row"><span class="field-label">Collar Height (in)</span><div class="num-wrap"><input type="number" step="0.125" min="1" max="52" data-h="${i}" data-k="collar" value="${f8(h.collar)}"><span class="unit">in</span></div></div>
+      <label class="check-row"><input type="checkbox" data-h="${i}" data-curcentered ${h.vMode === "center" ? "checked" : ""}> Centered on Cover</label>
+      <label class="check-row"><input type="checkbox" data-h="${i}" data-curstorm ${h.storm ? "checked" : ""}> Add Storm Collar</label>`;
+  }).join("") || `<div class="note">No holes selected.</div>`;
+
+  wrap.querySelectorAll("input[type=number][data-k]").forEach(el => {
+    const apply = () => {
+      const h = state.holes[+el.dataset.h], v = parseFloat(el.value); if (isNaN(v)) return;
+      h[el.dataset.k] = v;
+      if (el.dataset.k === "dia") { clampInside(h); clampInsideV(h); }
+    };
+    el.oninput = () => { apply(); renderAllPreservingFocus(); };
+    el.onblur = () => { apply(); renderAll(); };
+  });
+  wrap.querySelectorAll("[data-curcentered]").forEach(el => el.onchange = () => {
+    const h = state.holes[+el.dataset.h];
+    // Same rule as everywhere else: only an explicit "Centered" pick moves the
+    // hole. Unchecking it just leaves the position exactly where it was.
+    if (el.checked) { h.cx = state.L / 2; h.cy = state.W / 2; h.vMode = "center"; h.hMode = "center"; }
+    else { h.vMode = "top"; h.hMode = "left"; }
+    renderAll();
+  });
+  wrap.querySelectorAll("[data-curstorm]").forEach(el => el.onchange = () => {
+    state.holes[+el.dataset.h].storm = el.checked; renderAll();
+  });
+}
+
 function renderAll() {
-  renderTypeCards(); renderChips();
+  renderTypeCards(); renderChips(); renderCurrentUI();
   if ($("inL")) { $("inL").value = state.L; $("inW").value = state.W; $("inS").value = state.S; }
   $("xbToggle").className = "toggle" + (state.xbend ? " on" : "");
   $("dripToggle").className = "toggle" + (state.drip ? " on" : "");
